@@ -1,14 +1,54 @@
-# astrbot-plugin-helloworld
+# BangumiBot
 
-AstrBot 插件模板 / A template plugin for AstrBot plugin feature
+基于 [AstrBot](https://github.com/AstrBotDevs/AstrBot) 框架的追番管理插件。通过 QQ 机器人管理 Bangumi 追番列表、同步观看进度、LLM 驱动的观感访谈、自动生成 Obsidian 兼容的 Markdown 观感记录。
 
-> [!NOTE]
-> This repo is just a template of [AstrBot](https://github.com/AstrBotDevs/AstrBot) Plugin.
-> 
-> [AstrBot](https://github.com/AstrBotDevs/AstrBot) is an agentic assistant for both personal and group conversations. It can be deployed across dozens of mainstream instant messaging platforms, including QQ, Telegram, Feishu, DingTalk, Slack, LINE, Discord, Matrix, etc. In addition, it provides a reliable and extensible conversational AI infrastructure for individuals, developers, and teams. Whether you need a personal AI companion, an intelligent customer support agent, an automation assistant, or an enterprise knowledge base, AstrBot enables you to quickly build AI applications directly within your existing messaging workflows.
+## 功能
 
-# Supports
+- **番剧搜索** — `/search 芙莉莲` 搜索 Bangumi 条目
+- **追番管理** — `/sub add|list|remove` 管理追番列表
+- **进度同步** — 发送"芙莉莲15看完"自动同步观看进度到 Bangumi
+- **更新提醒** — 定时检查番剧更新，自动推送 QQ 通知
+- **观感访谈** — 同步进度后 LLM 自动发起多轮访谈对话
+- **Markdown 记录** — 访谈内容自动保存为 Obsidian 兼容的 Markdown 文件
 
-- [AstrBot Repo](https://github.com/AstrBotDevs/AstrBot)
-- [AstrBot Plugin Development Docs (Chinese)](https://docs.astrbot.app/dev/star/plugin-new.html)
-- [AstrBot Plugin Development Docs (English)](https://docs.astrbot.app/en/dev/star/plugin-new.html)
+## 安装
+
+1. 将 `astrbot_plugin_bangumi/` 放入 AstrBot 的 `addons/` 目录
+2. 在 AstrBot WebUI 中启用插件
+3. 配置 Bangumi OAuth2 凭证（需在 https://bgm.tv/dev 创建应用）
+
+## 命令
+
+| 命令 | 说明 |
+|------|------|
+| `/search <关键词>` | 搜索 Bangumi 番剧 |
+| `/sub add <id>` | 添加追番 |
+| `/sub list` | 查看追番列表 |
+| `/sub remove <id>` | 移除追番 |
+| `/sync` | 手动触发更新检查 |
+| `/notes list` | 查看观感记录 |
+
+## 消息模式
+
+发送 `番剧名 + 集数 + 看完/看到/追到` 即可自动同步进度，例如：
+
+- `芙莉莲15看完`
+- `葬送的芙莉莲看到第10集`
+
+## 文档
+
+- `docs/architecture.md` — 系统架构
+- `docs/development-plan.md` — 开发阶段
+- `docs/modules.md` — 模块划分
+- `docs/database.md` — 数据库设计
+- `docs/bangumi-api.md` — Bangumi API 封装
+- `docs/data-flow.md` — 数据流设计
+- `docs/markdown-storage.md` — Markdown 存储
+- `docs/qqbot-astrbot.md` — QQ 机器人配置
+- `docs/adr/` — 架构决策记录
+
+## 依赖
+
+- Python 3.12+
+- httpx, aiosqlite
+- AstrBot >= 4.16

@@ -3,7 +3,7 @@
 ## 目录结构
 
 ```
-astrbot_plugin_bangumi/
+astrbot_plugin_bangumi_assistent/
 │
 ├── metadata.yaml              # 插件元信息
 ├── main.py                    # 插件入口，Star 类，注册命令/事件

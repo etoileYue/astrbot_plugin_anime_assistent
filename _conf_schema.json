@@ -1,0 +1,28 @@
+{
+  "bangumi_client_id": {
+    "description": "Bangumi OAuth2 Client ID",
+    "type": "string",
+    "hint": "在 https://bgm.tv/dev 创建应用获取"
+  },
+  "bangumi_client_secret": {
+    "description": "Bangumi OAuth2 Client Secret",
+    "type": "string",
+    "hint": "在 https://bgm.tv/dev 创建应用获取"
+  },
+  "check_interval_hours": {
+    "description": "番剧更新检查间隔（小时）",
+    "type": "float",
+    "default": 2.0,
+    "slider": {"min": 0.5, "max": 24, "step": 0.5}
+  },
+  "max_interview_rounds": {
+    "description": "访谈最大追问轮数",
+    "type": "int",
+    "default": 3
+  },
+  "anime_notes_dir": {
+    "description": "观感记录保存目录",
+    "type": "string",
+    "default": "anime_notes"
+  }
+}

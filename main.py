@@ -1,24 +1,164 @@
-from astrbot.api.event import filter, AstrMessageEvent, MessageEventResult
+import asyncio
+from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
-from astrbot.api import logger
+from astrbot.api import logger, AstrBotConfig
 
-@register("helloworld", "YourName", "一个简单的 Hello World 插件", "1.0.0")
-class MyPlugin(Star):
-    def __init__(self, context: Context):
+from .core.config import PluginConfig
+from .core.scheduler import UpdateScheduler
+from .handlers.interview import InterviewHandler
+from .handlers.progress import ProgressHandler
+from .handlers.subscription import SubscriptionHandler
+from .storage.database import Database
+
+
+@register(
+    "astrbot_plugin_bangumi",
+    "etoile_yue",
+    "追番管理插件 — 搜索番剧、同步观看进度、LLM 观感访谈、自动生成 Markdown 记录",
+    "0.1.0",
+)
+class BangumiPlugin(Star):
+    def __init__(self, context: Context, config: AstrBotConfig):
         super().__init__(context)
+        self.plugin_config = PluginConfig(config)
+        self.db = Database()
+        self.scheduler = UpdateScheduler(self)
+        self.interview_handler = InterviewHandler(self, self.db, self.plugin_config)
 
     async def initialize(self):
-        """可选择实现异步的插件初始化方法，当实例化该插件类之后会自动调用该方法。"""
+        await self.db.initialize(self.plugin_config)
+        asyncio.create_task(self.scheduler.run())
 
-    # 注册指令的装饰器。指令名为 helloworld。注册成功后，发送 `/helloworld` 就会触发这个指令，并回复 `你好, {user_name}!`
-    @filter.command("helloworld")
-    async def helloworld(self, event: AstrMessageEvent):
-        """这是一个 hello world 指令""" # 这是 handler 的描述，将会被解析方便用户了解插件内容。建议填写。
-        user_name = event.get_sender_name()
-        message_str = event.message_str # 用户发的纯文本消息字符串
-        message_chain = event.get_messages() # 用户所发的消息的消息链 # from astrbot.api.message_components import *
-        logger.info(message_chain)
-        yield event.plain_result(f"Hello, {user_name}, 你发了 {message_str}!") # 发送一条纯文本消息
+    def _ensure_umo(self, event: AstrMessageEvent):
+        """注册 UMO 以便调度器推送通知。"""
+        self.scheduler.set_umo(event.unified_msg_origin)
+
+    # === 搜索 ===
+
+    @filter.command("search")
+    async def cmd_search(self, event: AstrMessageEvent, *, keyword: str = ""):
+        """搜索 Bangumi 番剧。用法：/search <关键词>"""
+        self._ensure_umo(event)
+        if not keyword:
+            yield event.plain_result("用法：/search <关键词>\n例如：/search 芙莉莲")
+            return
+        from .api.bangumi import BangumiClient
+
+        client = BangumiClient(self.plugin_config)
+        try:
+            results = await client.search_subject(keyword)
+        finally:
+            await client.close()
+        if not results:
+            yield event.plain_result(f"未找到与「{keyword}」相关的结果。")
+            return
+        lines = [f"搜索「{keyword}」的结果："]
+        for i, sub in enumerate(results[:5]):
+            name = sub.name_cn or sub.name
+            eps = f"{sub.eps}集" if sub.eps else "集数未知"
+            lines.append(f"{i+1}. [{sub.id}] {name} ({eps})")
+        yield event.plain_result("\n".join(lines))
+
+    # === 追番管理 ===
+
+    @filter.command_group("sub")
+    def sub_group(self):
+        """追番列表管理"""
+        pass
+
+    @sub_group.command("add")
+    async def cmd_sub_add(self, event: AstrMessageEvent, subject_id: int):
+        """添加追番。用法：/sub add <subject_id>"""
+        self._ensure_umo(event)
+        handler = SubscriptionHandler(self.db, self.plugin_config)
+        result = await handler.add_subscription(event, subject_id)
+        yield event.plain_result(result)
+
+    @sub_group.command("list")
+    async def cmd_sub_list(self, event: AstrMessageEvent):
+        """查看追番列表。用法：/sub list"""
+        self._ensure_umo(event)
+        handler = SubscriptionHandler(self.db, self.plugin_config)
+        result = await handler.list_subscriptions(event)
+        yield event.plain_result(result)
+
+    @sub_group.command("remove")
+    async def cmd_sub_remove(self, event: AstrMessageEvent, subject_id: int):
+        """移除追番。用法：/sub remove <subject_id>"""
+        self._ensure_umo(event)
+        handler = SubscriptionHandler(self.db, self.plugin_config)
+        result = await handler.remove_subscription(event, subject_id)
+        yield event.plain_result(result)
+
+    # === 手动同步 ===
+
+    @filter.command("sync")
+    async def cmd_sync(self, event: AstrMessageEvent):
+        """手动触发番剧更新检查。"""
+        self._ensure_umo(event)
+        await self.scheduler.check_once()
+        yield event.plain_result("已触发更新检查。")
+
+    # === 观感记录 ===
+
+    @filter.command_group("notes")
+    def notes_group(self):
+        """观感记录管理"""
+        pass
+
+    @notes_group.command("list")
+    async def cmd_notes_list(self, event: AstrMessageEvent):
+        """查看已有观感记录。用法：/notes list"""
+        from .storage.markdown import MarkdownStorage
+
+        storage = MarkdownStorage(self.plugin_config.anime_notes_dir)
+        seasons = storage.list_seasons()
+        if not seasons:
+            yield event.plain_result("暂无观感记录。")
+            return
+        lines = ["观感记录："]
+        for season in sorted(seasons, reverse=True):
+            animes = storage.list_animes(season)
+            for anime in animes:
+                lines.append(f"  [{season}] {anime}")
+        yield event.plain_result("\n".join(lines))
+
+    # === 消息路由（非命令消息） ===
+    # 优先级：访谈会话 > 进度同步
+
+    @filter.event_message_type(filter.EventMessageType.ALL)
+    async def on_message(self, event: AstrMessageEvent):
+        """处理非命令消息：先检查访谈，再尝试进度同步。"""
+        self._ensure_umo(event)
+
+        # 1. 检查是否有活跃的访谈会话
+        qq_id = event.get_sender_id()
+        user = await self.db.get_user(qq_id)
+        if user and self.interview_handler.has_active_session(user.id):
+            result = await self.interview_handler.handle_message(event)
+            if result:
+                yield event.plain_result(result)
+            return
+
+        # 2. 尝试进度同步
+        progress_handler = ProgressHandler(self.db, self.plugin_config)
+        sync_result = await progress_handler.try_sync(event)
+        if sync_result:
+            yield event.plain_result(sync_result.message)
+            # 进度同步成功后，尝试发起访谈
+            if sync_result.subject_id and sync_result.episode:
+                question = await self.interview_handler.try_start(
+                    event,
+                    subject_id=sync_result.subject_id,
+                    episode=sync_result.episode,
+                    subject_name=sync_result.subject_name,
+                    subject_name_cn=sync_result.subject_name_cn,
+                )
+                if question:
+                    yield event.plain_result(
+                        f'想聊聊这一集吗？\n\n{question}\n\n（随时可以说"不聊了"结束访谈）'
+                    )
 
     async def terminate(self):
-        """可选择实现异步的插件销毁方法，当插件被卸载/停用时会调用。"""
+        await self.scheduler.stop()
+        await self.db.close()
