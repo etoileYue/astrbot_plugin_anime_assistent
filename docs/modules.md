@@ -50,7 +50,7 @@ astrbot_plugin_bangumi_assistent/
 ### core/config.py — 配置管理
 
 - 从 AstrBot 插件配置系统读取配置
-- 配置项：Bangumi OAuth2 token、LLM API key、检查间隔、通知方式等
+- 配置项：Bangumi Access Token、LLM API key、检查间隔、通知方式等
 - 提供配置的读取和写入接口
 
 **依赖**：无
@@ -75,7 +75,7 @@ astrbot_plugin_bangumi_assistent/
 ### api/bangumi.py — Bangumi API 客户端
 
 - 封装 Bangumi API v0 的所有接口
-- 处理 OAuth2 认证
+- 处理 Bearer Token 认证
 - 处理请求频率限制
 - 数据格式转换（API 响应 → 内部数据结构）
 

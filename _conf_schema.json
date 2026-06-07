@@ -1,13 +1,8 @@
 {
-  "bangumi_client_id": {
-    "description": "Bangumi OAuth2 Client ID",
+  "bangumi_access_token": {
+    "description": "Bangumi Access Token",
     "type": "string",
-    "hint": "在 https://bgm.tv/dev 创建应用获取"
-  },
-  "bangumi_client_secret": {
-    "description": "Bangumi OAuth2 Client Secret",
-    "type": "string",
-    "hint": "在 https://bgm.tv/dev 创建应用获取"
+    "hint": "在 https://bgm.tv/settings/token 获取个人访问令牌"
   },
   "check_interval_hours": {
     "description": "番剧更新检查间隔（小时）",

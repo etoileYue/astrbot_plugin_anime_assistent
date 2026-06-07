@@ -37,7 +37,7 @@
 | QQ → QQ Bot | QQ 官方机器人接收/发送消息，通过 QQ Bot API 通信 |
 | QQ Bot → AstrBot | Webhook / WebSocket，消息格式为 QQ Bot API 标准格式 |
 | AstrBot → Plugin | AstrBot 将消息封装为 `AstrMessageEvent`，分发给各插件 |
-| Plugin → Bangumi API | 插件通过 HTTP 调用 Bangumi API（OAuth2 认证） |
+| Plugin → Bangumi API | 插件通过 HTTP 调用 Bangumi API（Personal Access Token 认证） |
 | Plugin → SQLite | 插件本地读写用户数据、追番列表、状态 |
 | Plugin → Markdown | 插件写入观感记录到本地文件系统 |
 
@@ -79,7 +79,7 @@
 
 - **职责**：番剧搜索、收藏管理、观看进度同步
 - **API 版本**：v0
-- **认证**：OAuth2
+- **认证**：Personal Access Token (Bearer)
 - **地址**：https://api.bgm.tv
 
 ### LLM（可替换）

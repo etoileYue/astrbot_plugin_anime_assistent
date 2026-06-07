@@ -46,8 +46,8 @@
 
 | # | 任务 | 细节 |
 |---|------|------|
-| 1.1 | 注册 Bangumi 应用 | 在 bgm.tv/dev 创建应用，获取 client_id/secret |
-| 1.2 | 实现 OAuth2 流程 | 获取 access_token，处理 refresh |
+| 1.1 | 配置 Bangumi Token | 从 bgm.tv/settings/token 获取个人 Access Token |
+| 1.2 | 实现 Bearer Token 认证 | 将 Token 注入 HTTP 请求头 |
 | 1.3 | 实现 `api/bangumi.py` | search_subject, get_subject, get_episodes |
 | 1.4 | 实现收藏操作 | get_collection, add_collection, update_collection |
 | 1.5 | 实现进度操作 | mark_episode_watched, batch_update_episodes |

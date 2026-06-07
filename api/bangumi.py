@@ -65,7 +65,7 @@ class BangumiClient:
         return self._client
 
     def _get_access_token(self) -> str:
-        return ""
+        return self._config.bangumi_access_token
 
     async def _rate_limit(self, kind: str):
         if kind == "search":

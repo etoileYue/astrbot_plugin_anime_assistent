@@ -6,43 +6,12 @@ Bangumi API v0 是 bgm.tv 提供的 REST API，用于查询番剧信息、管理
 
 - **API 文档**：https://github.com/bangumi/api
 - **Base URL**：`https://api.bgm.tv`
-- **认证方式**：OAuth2（Authorization Code Grant）
+- **认证方式**：Personal Access Token (Bearer)
 - **数据格式**：JSON
 
-## 认证流程
+## 认证方式
 
-### 1. 创建应用
-
-访问 https://bgm.tv/dev 创建应用，获取 `client_id` 和 `client_secret`。
-
-### 2. 获取 Access Token
-
-```
-GET https://bgm.tv/oauth/authorize
-    ?client_id={client_id}
-    &response_type=code
-
-    用户授权后重定向到你的回调 URL，携带 code
-
-POST https://bgm.tv/oauth/access_token
-    Body: {
-        "grant_type": "authorization_code",
-        "client_id": "{client_id}",
-        "client_secret": "{client_secret}",
-        "code": "{code}",
-        "redirect_uri": "{redirect_uri}"
-    }
-
-    返回：
-    {
-        "access_token": "...",
-        "expires_in": 604800,    // 7天
-        "refresh_token": "...",
-        "token_type": "Bearer"
-    }
-```
-
-### 3. 使用 Token
+访问 https://bgm.tv/settings/token 获取个人 Access Token。将 Token 配置到插件的 `bangumi_access_token` 字段即可。
 
 所有需要认证的请求在 Header 中携带：
 ```
@@ -94,7 +63,7 @@ class Episode:
 class BangumiClient:
     """Bangumi API v0 客户端"""
 
-    def __init__(self, access_token: str, base_url: str = "https://api.bgm.tv"):
+    def __init__(self, config: PluginConfig):
         ...
 
     # === 条目 ===
@@ -176,9 +145,9 @@ results = await client.search_subject("葬送的芙莉莲")
    - 评分更新偶有失败
    - 建议加重试机制（最多 3 次，指数退避）
 
-4. **Token 过期**
-   - Access token 有效期 7 天
-   - 需要实现 refresh 逻辑或定期重新授权
+4. **Token 失效**
+   - 个人 Access Token 不会自动过期
+   - 如遇 401 错误，检查 Token 是否被手动撤销，重新从 https://bgm.tv/settings/token 获取
 
 5. **异步要求**
    - AstrBot 要求使用异步 HTTP 库（httpx / aiohttp）

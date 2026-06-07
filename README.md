@@ -15,7 +15,7 @@
 
 1. 将 `astrbot_plugin_bangumi/` 放入 AstrBot 的 `addons/` 目录
 2. 在 AstrBot WebUI 中启用插件
-3. 配置 Bangumi OAuth2 凭证（需在 https://bgm.tv/dev 创建应用）
+3. 配置 Bangumi Access Token（从 https://bgm.tv/settings/token 获取）
 
 ## 命令
 

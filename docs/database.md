@@ -18,7 +18,7 @@ users ──┬── subscriptions ──┬── watch_log
 CREATE TABLE users (
     id          INTEGER PRIMARY KEY,
     qq_id       TEXT UNIQUE NOT NULL,        -- QQ号
-    bangumi_token TEXT,                       -- Bangumi OAuth2 access token
+    bangumi_token TEXT,                       -- Bangumi access token
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```

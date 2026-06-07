@@ -8,12 +8,8 @@ class PluginConfig:
         self._config = config
 
     @property
-    def bangumi_client_id(self) -> str:
-        return self._config.get("bangumi_client_id", "")
-
-    @property
-    def bangumi_client_secret(self) -> str:
-        return self._config.get("bangumi_client_secret", "")
+    def bangumi_access_token(self) -> str:
+        return self._config.get("bangumi_access_token", "")
 
     @property
     def check_interval_hours(self) -> float:
