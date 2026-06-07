@@ -72,7 +72,7 @@
 ### Markdown 文件存储
 
 - **职责**：观感记录、对话记录
-- **位置**：`anime_notes/` 目录
+- **位置**：插件 data 目录下 `{data_path}/anime_notes/`（用户可通过配置自定义路径）
 - **格式**：YAML frontmatter + Markdown 正文，兼容 Obsidian
 
 ### Bangumi API（外部服务）

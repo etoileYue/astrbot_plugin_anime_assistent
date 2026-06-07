@@ -21,7 +21,8 @@ class PluginConfig:
 
     @property
     def anime_notes_dir(self) -> str:
-        return self._config.get("anime_notes_dir", "anime_notes")
+        """观感记录目录。若用户未自定义则返回空字符串，由调用方使用 data_path 默认值。"""
+        return self._config.get("anime_notes_dir", "")
 
     def save(self):
         self._config.save_config()

@@ -1,7 +1,9 @@
 import asyncio
+from pathlib import Path
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
 from astrbot.api import logger, AstrBotConfig
+from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .core.config import PluginConfig
 from .core.scheduler import UpdateScheduler
@@ -26,8 +28,16 @@ class BangumiPlugin(Star):
         self.interview_handler = InterviewHandler(self, self.db, self.plugin_config)
 
     async def initialize(self):
-        await self.db.initialize(self.plugin_config)
+        self._data_path = str(Path(get_astrbot_data_path()) / "plugin_data" / self.name)
+        await self.db.initialize(self._data_path)
         asyncio.create_task(self.scheduler.run())
+
+    def _get_notes_dir(self) -> str:
+        """返回观感记录目录：优先用户自定义，否则在 data_path 下。"""
+        custom = self.plugin_config.anime_notes_dir
+        if custom:
+            return custom
+        return str(Path(self._data_path) / "anime_notes")
 
     def _ensure_umo(self, event: AstrMessageEvent):
         """注册 UMO 以便调度器推送通知。"""
@@ -111,7 +121,7 @@ class BangumiPlugin(Star):
         """查看已有观感记录。用法：/notes list"""
         from .storage.markdown import MarkdownStorage
 
-        storage = MarkdownStorage(self.plugin_config.anime_notes_dir)
+        storage = MarkdownStorage(self._get_notes_dir())
         seasons = storage.list_seasons()
         if not seasons:
             yield event.plain_result("暂无观感记录。")

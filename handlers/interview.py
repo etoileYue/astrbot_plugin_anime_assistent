@@ -69,7 +69,7 @@ class InterviewHandler:
         except Exception:
             pass
 
-        storage = MarkdownStorage(self._config.anime_notes_dir)
+        storage = MarkdownStorage(self._plugin._get_notes_dir())
         season = storage._get_season_dir(air_date)
         filepath = storage.save_episode(
             anime_name=engine.subject_name,

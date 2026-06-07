@@ -29,4 +29,4 @@
 
 - `requirements.txt` 增加 `aiosqlite>=0.20.0` 依赖
 - 所有数据库操作使用 `await`
-- 数据库文件位于 AstrBot 的 `data/plugin_data/bangumi/` 目录
+- 数据库文件位于 AstrBot 插件 data 目录下（通过 `context.get_data_path()` 获取绝对路径），具体为 `{data_path}/bangumi.db`

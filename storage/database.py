@@ -70,8 +70,8 @@ class Database:
         self._db: Optional[aiosqlite.Connection] = None
         self._path: str = ""
 
-    async def initialize(self, config):
-        data_dir = Path("data") / "plugin_data" / "bangumi"
+    async def initialize(self, data_path: str):
+        data_dir = Path(data_path)
         data_dir.mkdir(parents=True, exist_ok=True)
         self._path = str(data_dir / "bangumi.db")
         self._db = await aiosqlite.connect(self._path)

@@ -6,8 +6,10 @@
 
 ## 目录结构
 
+观感记录存储在 AstrBot 插件 data 目录下（`{data_path}/anime_notes/`），通过 `context.get_data_path()` 获取绝对路径。用户也可在配置中自定义路径。
+
 ```
-anime_notes/
+{data_path}/anime_notes/
 │
 ├── 2026.4/                     # 2026年春季番
 │   ├── 葬送的芙莉莲.md
