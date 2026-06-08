@@ -10,6 +10,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 BASE_URL = "https://api.bgm.tv"
+CN_MIRROR_URL = "https://api.bangumi.one"
 SEARCH_INTERVAL = 1.0
 UPDATE_INTERVAL = 0.5
 MAX_RETRIES = 3
@@ -66,8 +67,9 @@ class BangumiClient:
             token = self._get_access_token()
             if token:
                 headers["Authorization"] = f"Bearer {token}"
+            base_url = CN_MIRROR_URL if self._config.use_cn_mirror else BASE_URL
             self._client = httpx.AsyncClient(
-                base_url=BASE_URL,
+                base_url=base_url,
                 headers=headers,
                 timeout=30.0,
             )

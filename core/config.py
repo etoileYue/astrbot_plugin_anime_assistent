@@ -12,6 +12,10 @@ class PluginConfig:
         return self._config.get("bangumi_access_token", "")
 
     @property
+    def use_cn_mirror(self) -> bool:
+        return self._config.get("use_cn_mirror", False)
+
+    @property
     def check_interval_hours(self) -> float:
         return self._config.get("check_interval_hours", 2.0)
 
