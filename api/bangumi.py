@@ -44,6 +44,15 @@ class Episode:
     airdate: str
 
 
+@dataclass
+class CollectionItem:
+    subject_id: int
+    subject_name: str
+    subject_name_cn: str
+    eps: int
+    ep_status: int
+
+
 class BangumiClient:
     def __init__(self, config):
         self._config = config
@@ -151,6 +160,34 @@ class BangumiClient:
     async def get_collection(self, subject_id: int) -> Optional[dict]:
         data = await self._request("GET", f"/v0/users/-/collections/{subject_id}")
         return data if data else None
+
+    async def get_watching_collections(self) -> list[CollectionItem]:
+        """分页获取所有「在看」(type=3) 收藏。"""
+        await self._rate_limit("search")
+        all_items: list[CollectionItem] = []
+        offset = 0
+        limit = 50
+        while True:
+            data = await self._request(
+                "GET",
+                "/v0/users/-/collections",
+                params={"type": 3, "limit": limit, "offset": offset},
+            )
+            for item in data.get("data", []):
+                subject = item.get("subject", {})
+                all_items.append(CollectionItem(
+                    subject_id=item.get("subject_id", subject.get("id", 0)),
+                    subject_name=subject.get("name", ""),
+                    subject_name_cn=subject.get("name_cn", ""),
+                    eps=subject.get("eps", 0) or 0,
+                    ep_status=item.get("ep_status", 0),
+                ))
+            total = data.get("total", 0)
+            offset += limit
+            if offset >= total:
+                break
+            await self._rate_limit("search")
+        return all_items
 
     async def add_collection(self, subject_id: int, collection_type: int = CollectionType.DO) -> dict:
         await self._rate_limit("update")

@@ -27,17 +27,16 @@ INTERVIEW_SYSTEM_PROMPT = """你是一个友好的追番伙伴，正在和用户
 
 
 class InterviewEngine:
-    """单次访谈的状态机。每个 (user_id, subject_id, episode) 创建一个实例。"""
+    """单次访谈的状态机。每个 (subject_id, episode) 创建一个实例。"""
 
     def __init__(self, plugin, db, config, subject_id: int, episode: int,
-                 subject_name: str, subject_name_cn: str = "", user_id: int = 0):
+                 subject_name: str, subject_name_cn: str = ""):
         self._plugin = plugin
         self._db = db
         self._config = config
         self.subject_id = subject_id
         self.episode = episode
         self.subject_name = subject_name_cn or subject_name
-        self.user_id = user_id
         self.state = InterviewState.IDLE
         self.round = 0
         self.max_rounds = config.max_interview_rounds
@@ -56,7 +55,6 @@ class InterviewEngine:
             self._history.append((question, ""))
             # 保存到数据库
             await self._db.save_interview(
-                user_id=self.user_id,
                 subject_id=self.subject_id,
                 episode=self.episode,
                 question=question,
@@ -84,7 +82,6 @@ class InterviewEngine:
         if self._history:
             self._history[-1] = (self._history[-1][0], answer)
         await self._db.save_interview(
-            user_id=self.user_id,
             subject_id=self.subject_id,
             episode=self.episode,
             question=self._history[-1][0] if self._history else "",
@@ -106,7 +103,6 @@ class InterviewEngine:
             self.state = InterviewState.WAITING
             self._history.append((follow_up, ""))
             await self._db.save_interview(
-                user_id=self.user_id,
                 subject_id=self.subject_id,
                 episode=self.episode,
                 question=follow_up,

@@ -51,16 +51,13 @@ class ProgressHandler:
             return None
 
         subject_id = alias_row.subject_id
-        qq_id = event.get_sender_id()
-        user = await self._db.ensure_user(qq_id)
 
-        sub = await self._db.get_subscription(user.id, subject_id)
+        sub = await self._db.get_subscription(subject_id)
         if not sub:
             try:
                 client = BangumiClient(self._config)
                 subject = await client.get_subject(subject_id)
                 sub = await self._db.add_subscription(
-                    user_id=user.id,
                     subject_id=subject.id,
                     subject_name=subject.name,
                     subject_name_cn=subject.name_cn,
@@ -93,7 +90,7 @@ class ProgressHandler:
             logger.error(f"同步 Bangumi 失败: {e}")
             return SyncResult(message=f"同步 Bangumi 失败：{e}")
 
-        await self._db.log_watch(user.id, subject_id, episode, source="manual")
+        await self._db.log_watch(subject_id, episode, source="manual")
         if episode > sub.last_notified_ep:
             await self._db.update_last_notified_ep(sub.id, episode)
 

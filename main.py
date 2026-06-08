@@ -30,6 +30,15 @@ class BangumiPlugin(Star):
     async def initialize(self):
         self._data_path = str(Path(get_astrbot_data_path()) / "plugin_data" / self.name)
         await self.db.initialize(self._data_path)
+
+        # 从 Bangumi 同步「在看」列表
+        try:
+            from .core.sync import sync_from_bangumi
+            total, added = await sync_from_bangumi(self.db, self.plugin_config)
+            logger.info(f"Bangumi 同步：新增 {added}，共 {total} 部在看番剧")
+        except Exception as e:
+            logger.warning(f"Bangumi 同步失败（不影响插件启动）：{e}")
+
         asyncio.create_task(self.scheduler.run())
 
     def _get_notes_dir(self) -> str:
@@ -81,7 +90,7 @@ class BangumiPlugin(Star):
         """添加追番。用法：/sub add <subject_id>"""
         self._ensure_umo(event)
         handler = SubscriptionHandler(self.db, self.plugin_config)
-        result = await handler.add_subscription(event, subject_id)
+        result = await handler.add_subscription(subject_id)
         yield event.plain_result(result)
 
     @sub_group.command("list")
@@ -89,7 +98,7 @@ class BangumiPlugin(Star):
         """查看追番列表。用法：/sub list"""
         self._ensure_umo(event)
         handler = SubscriptionHandler(self.db, self.plugin_config)
-        result = await handler.list_subscriptions(event)
+        result = await handler.list_subscriptions()
         yield event.plain_result(result)
 
     @sub_group.command("remove")
@@ -97,8 +106,20 @@ class BangumiPlugin(Star):
         """移除追番。用法：/sub remove <subject_id>"""
         self._ensure_umo(event)
         handler = SubscriptionHandler(self.db, self.plugin_config)
-        result = await handler.remove_subscription(event, subject_id)
+        result = await handler.remove_subscription(subject_id)
         yield event.plain_result(result)
+
+    @sub_group.command("sync")
+    async def cmd_sub_sync(self, event: AstrMessageEvent):
+        """从 Bangumi 同步「在看」列表到本地。用法：/sub sync"""
+        self._ensure_umo(event)
+        from .core.sync import sync_from_bangumi
+
+        total, added = await sync_from_bangumi(self.db, self.plugin_config)
+        if total == 0:
+            yield event.plain_result("Bangumi「在看」列表为空。")
+        else:
+            yield event.plain_result(f"同步完成：共 {total} 部在看番剧，新增 {added} 部。")
 
     # === 手动同步 ===
 
@@ -142,9 +163,7 @@ class BangumiPlugin(Star):
         self._ensure_umo(event)
 
         # 1. 检查是否有活跃的访谈会话
-        qq_id = event.get_sender_id()
-        user = await self.db.get_user(qq_id)
-        if user and self.interview_handler.has_active_session(user.id):
+        if self.interview_handler.has_active_session():
             result = await self.interview_handler.handle_message(event)
             if result:
                 yield event.plain_result(result)

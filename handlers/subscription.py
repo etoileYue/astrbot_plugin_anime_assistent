@@ -15,7 +15,7 @@ class SubscriptionHandler:
         self._db = db
         self._config = config
 
-    async def add_subscription(self, event, subject_id: int) -> str:
+    async def add_subscription(self, subject_id: int) -> str:
         try:
             client = BangumiClient(self._config)
             subject = await client.get_subject(subject_id)
@@ -23,10 +23,7 @@ class SubscriptionHandler:
             logger.error(f"获取番剧信息失败: {e}")
             return f"获取番剧信息失败：{e}"
 
-        qq_id = event.get_sender_id()
-        user = await self._db.ensure_user(qq_id)
         await self._db.add_subscription(
-            user_id=user.id,
             subject_id=subject.id,
             subject_name=subject.name,
             subject_name_cn=subject.name_cn,
@@ -43,10 +40,8 @@ class SubscriptionHandler:
         name = subject.name_cn or subject.name
         return f"已添加追番：{name} [{subject.id}]（{subject.eps}集）"
 
-    async def list_subscriptions(self, event) -> str:
-        qq_id = event.get_sender_id()
-        user = await self._db.ensure_user(qq_id)
-        subs = await self._db.list_subscriptions(user.id)
+    async def list_subscriptions(self) -> str:
+        subs = await self._db.list_subscriptions()
         if not subs:
             return "追番列表为空。使用 /sub add <id> 添加追番。"
         lines = ["当前追番列表："]
@@ -57,12 +52,10 @@ class SubscriptionHandler:
             lines.append(f"  [{sub.subject_id}] {name} — {status} ({eps})")
         return "\n".join(lines)
 
-    async def remove_subscription(self, event, subject_id: int) -> str:
-        qq_id = event.get_sender_id()
-        user = await self._db.ensure_user(qq_id)
-        sub = await self._db.get_subscription(user.id, subject_id)
+    async def remove_subscription(self, subject_id: int) -> str:
+        sub = await self._db.get_subscription(subject_id)
         if not sub:
             return f"未找到 subject_id={subject_id} 的追番记录。"
         name = sub.subject_name_cn or sub.subject_name
-        await self._db.remove_subscription(user.id, subject_id)
+        await self._db.remove_subscription(subject_id)
         return f"已移除追番：{name} [{subject_id}]"

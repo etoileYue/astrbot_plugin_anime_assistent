@@ -1,22 +1,12 @@
 """数据模型定义 — 对应数据库表结构。"""
 
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Optional
-
-
-@dataclass
-class User:
-    id: int = 0
-    qq_id: str = ""
-    bangumi_token: str = ""
-    created_at: str = ""
 
 
 @dataclass
 class Subscription:
     id: int = 0
-    user_id: int = 0
     subject_id: int = 0
     subject_name: str = ""
     subject_name_cn: str = ""
@@ -36,7 +26,6 @@ class Alias:
 @dataclass
 class WatchLog:
     id: int = 0
-    user_id: int = 0
     subject_id: int = 0
     episode: int = 0
     watched_at: str = ""
@@ -46,7 +35,6 @@ class WatchLog:
 @dataclass
 class Interview:
     id: int = 0
-    user_id: int = 0
     subject_id: int = 0
     episode: int = 0
     question: str = ""

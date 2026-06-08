@@ -13,6 +13,7 @@ astrbot_plugin_bangumi_assistent/
 │   ├── __init__.py
 │   ├── config.py              # 配置管理（读取/写入插件配置）
 │   ├── scheduler.py           # 定时任务（检查番剧更新）
+│   ├── sync.py                # Bangumi 收藏同步
 │   └── interview_engine.py    # 访谈引擎（生成问题、管理会话状态）
 │
 ├── api/                       # 外部 API 封装
@@ -60,6 +61,15 @@ astrbot_plugin_bangumi_assistent/
 - 定时轮询 Bangumi 检查番剧更新
 - 与本地数据库对比，发现新集数后触发通知
 - 使用 AstrBot 的定时任务机制
+
+**依赖**：`api/bangumi.py`, `storage/database.py`
+
+### core/sync.py — Bangumi 收藏同步
+
+- 从 Bangumi API 拉取「在看」收藏列表
+- 同步到本地 subscriptions 表
+- 自动填充别名（name、name_cn、subject_id）
+- 插件初始化时自动调用，也可通过 `/sub sync` 手动触发
 
 **依赖**：`api/bangumi.py`, `storage/database.py`
 

@@ -19,41 +19,32 @@ class InterviewHandler:
     async def try_start(self, event, subject_id: int, episode: int,
                         subject_name: str, subject_name_cn: str = "") -> str | None:
         """进度同步后尝试发起访谈。返回初始问题或 None。"""
-        qq_id = event.get_sender_id()
-        user = await self._db.ensure_user(qq_id)
         umo = event.unified_msg_origin
 
         engine = InterviewEngine(
             self._plugin, self._db, self._config,
             subject_id=subject_id, episode=episode,
             subject_name=subject_name, subject_name_cn=subject_name_cn,
-            user_id=user.id,
         )
         question = await engine.start(umo)
         if question is None:
             return None
 
-        self._active_sessions[(user.id, subject_id, episode)] = engine
+        self._active_sessions[(subject_id, episode)] = engine
         return question
 
     async def handle_message(self, event) -> str | None:
         """检查消息是否属于活跃访谈，如果是则处理回复。"""
-        qq_id = event.get_sender_id()
-        user = await self._db.get_user(qq_id)
-        if user is None:
-            return None
-
-        for (uid, sid, ep), engine in list(self._active_sessions.items()):
-            if uid == user.id:
-                response = await engine.handle_answer(event.message_str, event.unified_msg_origin)
-                if engine.state == InterviewState.ENDED:
-                    await self._save_markdown(engine, uid)
-                    del self._active_sessions[(uid, sid, ep)]
-                return response
+        for (sid, ep), engine in list(self._active_sessions.items()):
+            response = await engine.handle_answer(event.message_str, event.unified_msg_origin)
+            if engine.state == InterviewState.ENDED:
+                await self._save_markdown(engine)
+                del self._active_sessions[(sid, ep)]
+            return response
 
         return None
 
-    async def _save_markdown(self, engine: InterviewEngine, user_id: int):
+    async def _save_markdown(self, engine: InterviewEngine):
         qa_pairs = engine.get_qa_pairs()
         if not qa_pairs:
             return
@@ -80,5 +71,5 @@ class InterviewHandler:
         )
         logger.info(f"访谈记录已保存: {filepath}")
 
-    def has_active_session(self, user_id: int) -> bool:
-        return any(uid == user_id for uid, _, _ in self._active_sessions)
+    def has_active_session(self) -> bool:
+        return len(self._active_sessions) > 0

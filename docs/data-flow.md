@@ -1,5 +1,24 @@
 # 数据流设计
 
+## 0. Bangumi 收藏同步（插件初始化 / 手动触发）
+
+```
+Plugin initialize() 或用户执行 /sub sync
+  │
+  ├─ 1. 调 Bangumi API GET /v0/users/-/collections?type=3&limit=50&offset=0
+  │     分页获取所有「在看」收藏（token 自动标识用户）
+  ├─ 2. 对每个收藏条目：
+  │     ├─ INSERT OR IGNORE INTO subscriptions（不覆盖已有记录）
+  │     └─ INSERT OR IGNORE INTO aliases（name, name_cn, subject_id）
+  ├─ 3. commit
+  └─ 4. 返回统计：总数 / 新增数
+```
+
+**注意**：
+- last_notified_ep 初始化为 0，由下次定时更新检查自动填充
+- 使用 INSERT OR IGNORE 避免覆盖用户手动添加的订阅
+- 同步失败不阻塞插件启动
+
 ## 1. 番剧更新提醒（定时触发）
 
 ```

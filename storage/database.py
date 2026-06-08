@@ -6,29 +6,20 @@ from typing import Optional
 
 import aiosqlite
 
-from .models import Alias, Interview, Subscription, User, WatchLog
+from .models import Alias, Interview, Subscription, WatchLog
 
 logger = logging.getLogger(__name__)
 
 SCHEMA = """
-CREATE TABLE IF NOT EXISTS users (
-    id          INTEGER PRIMARY KEY,
-    qq_id       TEXT UNIQUE NOT NULL,
-    bangumi_token TEXT,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE IF NOT EXISTS subscriptions (
     id          INTEGER PRIMARY KEY,
-    user_id     INTEGER REFERENCES users(id),
-    subject_id  INTEGER NOT NULL,
+    subject_id  INTEGER NOT NULL UNIQUE,
     subject_name TEXT NOT NULL,
     subject_name_cn TEXT,
     status      INTEGER DEFAULT 3,
     total_eps   INTEGER,
     last_notified_ep INTEGER DEFAULT 0,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, subject_id)
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS aliases (
@@ -40,7 +31,6 @@ CREATE TABLE IF NOT EXISTS aliases (
 
 CREATE TABLE IF NOT EXISTS watch_log (
     id          INTEGER PRIMARY KEY,
-    user_id     INTEGER REFERENCES users(id),
     subject_id  INTEGER NOT NULL,
     episode     INTEGER NOT NULL,
     watched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -49,7 +39,6 @@ CREATE TABLE IF NOT EXISTS watch_log (
 
 CREATE TABLE IF NOT EXISTS interviews (
     id          INTEGER PRIMARY KEY,
-    user_id     INTEGER REFERENCES users(id),
     subject_id  INTEGER NOT NULL,
     episode     INTEGER NOT NULL,
     question    TEXT NOT NULL,
@@ -86,74 +75,55 @@ class Database:
             raise RuntimeError("Database not initialized")
         return self._db
 
-    # === users ===
-
-    async def ensure_user(self, qq_id: str) -> User:
-        row = await self.conn.execute_fetchall("SELECT * FROM users WHERE qq_id = ?", (qq_id,))
-        if row:
-            r = row[0]
-            return User(id=r[0], qq_id=r[1], bangumi_token=r[2] or "", created_at=r[3])
-        await self.conn.execute("INSERT INTO users (qq_id) VALUES (?)", (qq_id,))
-        await self.conn.commit()
-        return User(qq_id=qq_id)
-
-    async def get_user(self, qq_id: str) -> Optional[User]:
-        row = await self.conn.execute_fetchall("SELECT * FROM users WHERE qq_id = ?", (qq_id,))
-        if row:
-            r = row[0]
-            return User(id=r[0], qq_id=r[1], bangumi_token=r[2] or "", created_at=r[3])
-        return None
-
     # === subscriptions ===
 
     async def add_subscription(
-        self, user_id: int, subject_id: int, subject_name: str,
+        self, subject_id: int, subject_name: str,
         subject_name_cn: str = "", total_eps: int = 0, status: int = 3,
     ) -> Subscription:
         await self.conn.execute(
             """INSERT OR REPLACE INTO subscriptions
-               (user_id, subject_id, subject_name, subject_name_cn, total_eps, status)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (user_id, subject_id, subject_name, subject_name_cn, total_eps, status),
+               (subject_id, subject_name, subject_name_cn, total_eps, status)
+               VALUES (?, ?, ?, ?, ?)""",
+            (subject_id, subject_name, subject_name_cn, total_eps, status),
         )
         await self.conn.commit()
         return Subscription(
-            user_id=user_id, subject_id=subject_id, subject_name=subject_name,
+            subject_id=subject_id, subject_name=subject_name,
             subject_name_cn=subject_name_cn, total_eps=total_eps, status=status,
         )
 
-    async def remove_subscription(self, user_id: int, subject_id: int):
+    async def remove_subscription(self, subject_id: int):
         await self.conn.execute(
-            "DELETE FROM subscriptions WHERE user_id = ? AND subject_id = ?",
-            (user_id, subject_id),
+            "DELETE FROM subscriptions WHERE subject_id = ?",
+            (subject_id,),
         )
         await self.conn.commit()
 
-    async def get_subscription(self, user_id: int, subject_id: int) -> Optional[Subscription]:
+    async def get_subscription(self, subject_id: int) -> Optional[Subscription]:
         row = await self.conn.execute_fetchall(
-            "SELECT * FROM subscriptions WHERE user_id = ? AND subject_id = ?",
-            (user_id, subject_id),
+            "SELECT * FROM subscriptions WHERE subject_id = ?",
+            (subject_id,),
         )
         if row:
             r = row[0]
             return Subscription(
-                id=r[0], user_id=r[1], subject_id=r[2], subject_name=r[3],
-                subject_name_cn=r[4] or "", status=r[5], total_eps=r[6] or 0,
-                last_notified_ep=r[7] or 0, created_at=r[8],
+                id=r[0], subject_id=r[1], subject_name=r[2],
+                subject_name_cn=r[3] or "", status=r[4], total_eps=r[5] or 0,
+                last_notified_ep=r[6] or 0, created_at=r[7],
             )
         return None
 
-    async def list_subscriptions(self, user_id: int) -> list[Subscription]:
+    async def list_subscriptions(self) -> list[Subscription]:
         rows = await self.conn.execute_fetchall(
-            "SELECT * FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC",
-            (user_id,),
+            "SELECT * FROM subscriptions ORDER BY created_at DESC",
         )
         results = []
         for r in rows:
             results.append(Subscription(
-                id=r[0], user_id=r[1], subject_id=r[2], subject_name=r[3],
-                subject_name_cn=r[4] or "", status=r[5], total_eps=r[6] or 0,
-                last_notified_ep=r[7] or 0, created_at=r[8],
+                id=r[0], subject_id=r[1], subject_name=r[2],
+                subject_name_cn=r[3] or "", status=r[4], total_eps=r[5] or 0,
+                last_notified_ep=r[6] or 0, created_at=r[7],
             ))
         return results
 
@@ -164,9 +134,9 @@ class Database:
         results = []
         for r in rows:
             results.append(Subscription(
-                id=r[0], user_id=r[1], subject_id=r[2], subject_name=r[3],
-                subject_name_cn=r[4] or "", status=r[5], total_eps=r[6] or 0,
-                last_notified_ep=r[7] or 0, created_at=r[8],
+                id=r[0], subject_id=r[1], subject_name=r[2],
+                subject_name_cn=r[3] or "", status=r[4], total_eps=r[5] or 0,
+                last_notified_ep=r[6] or 0, created_at=r[7],
             ))
         return results
 
@@ -203,34 +173,34 @@ class Database:
 
     # === watch_log ===
 
-    async def log_watch(self, user_id: int, subject_id: int, episode: int, source: str = "manual") -> WatchLog:
+    async def log_watch(self, subject_id: int, episode: int, source: str = "manual") -> WatchLog:
         cursor = await self.conn.execute(
-            "INSERT INTO watch_log (user_id, subject_id, episode, source) VALUES (?, ?, ?, ?)",
-            (user_id, subject_id, episode, source),
+            "INSERT INTO watch_log (subject_id, episode, source) VALUES (?, ?, ?)",
+            (subject_id, episode, source),
         )
         await self.conn.commit()
-        return WatchLog(id=cursor.lastrowid, user_id=user_id, subject_id=subject_id,
+        return WatchLog(id=cursor.lastrowid, subject_id=subject_id,
                         episode=episode, source=source)
 
     # === interviews ===
 
-    async def save_interview(self, user_id: int, subject_id: int, episode: int,
+    async def save_interview(self, subject_id: int, episode: int,
                              question: str, answer: str = "", round_num: int = 1) -> Interview:
         cursor = await self.conn.execute(
-            "INSERT INTO interviews (user_id, subject_id, episode, question, answer, round) VALUES (?, ?, ?, ?, ?, ?)",
-            (user_id, subject_id, episode, question, answer, round_num),
+            "INSERT INTO interviews (subject_id, episode, question, answer, round) VALUES (?, ?, ?, ?, ?)",
+            (subject_id, episode, question, answer, round_num),
         )
         await self.conn.commit()
-        return Interview(id=cursor.lastrowid, user_id=user_id, subject_id=subject_id,
+        return Interview(id=cursor.lastrowid, subject_id=subject_id,
                          episode=episode, question=question, answer=answer, round=round_num)
 
-    async def get_interviews(self, user_id: int, subject_id: int, episode: int) -> list[Interview]:
+    async def get_interviews(self, subject_id: int, episode: int) -> list[Interview]:
         rows = await self.conn.execute_fetchall(
-            "SELECT * FROM interviews WHERE user_id = ? AND subject_id = ? AND episode = ? ORDER BY round",
-            (user_id, subject_id, episode),
+            "SELECT * FROM interviews WHERE subject_id = ? AND episode = ? ORDER BY round",
+            (subject_id, episode),
         )
-        return [Interview(id=r[0], user_id=r[1], subject_id=r[2], episode=r[3],
-                          question=r[4], answer=r[5], round=r[6], created_at=r[7]) for r in rows]
+        return [Interview(id=r[0], subject_id=r[1], episode=r[2],
+                          question=r[3], answer=r[4], round=r[5], created_at=r[6]) for r in rows]
 
     # === task_state ===
 
