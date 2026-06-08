@@ -72,7 +72,7 @@ class ProgressHandler:
             client = BangumiClient(self._config)
             collection = await client.get_collection(subject_id)
             if collection is None:
-                await client.add_collection(subject_id, CollectionType.DO)
+                await client.add_collection(subject_id, CollectionType.DOING)
             episodes = await client.get_episodes(subject_id)
             target = None
             for ep in episodes:

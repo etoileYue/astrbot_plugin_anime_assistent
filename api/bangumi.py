@@ -18,8 +18,8 @@ MAX_RETRIES = 3
 
 class CollectionType:
     WISH = 1
-    COLLECT = 2
-    DO = 3
+    DONE = 2
+    DOING = 3
     ON_HOLD = 4
     DROPPED = 5
 
@@ -58,6 +58,7 @@ class BangumiClient:
     def __init__(self, config):
         self._config = config
         self._client = None
+        self._username: Optional[str] = None
         self._last_search = 0.0
         self._last_update = 0.0
 
@@ -77,6 +78,12 @@ class BangumiClient:
 
     def _get_access_token(self) -> str:
         return self._config.bangumi_access_token
+
+    async def _get_username(self) -> str:
+        if self._username is None:
+            data = await self._request("GET", "/v0/me")
+            self._username = data["username"]
+        return self._username
 
     async def _rate_limit(self, kind: str):
         if kind == "search":
@@ -147,24 +154,38 @@ class BangumiClient:
         )
 
     async def get_episodes(self, subject_id: int) -> list[Episode]:
-        data = await self._request("GET", f"/v0/episodes", params={"subject_id": subject_id})
-        results = []
-        for item in data.get("data", []):
-            results.append(Episode(
-                id=item["id"],
-                ep=item.get("ep", 0) or 0,
-                name=item.get("name", ""),
-                name_cn=item.get("name_cn", ""),
-                airdate=item.get("airdate", ""),
-            ))
-        return results
+        if subject_id <= 0:
+            raise ValueError(f"subject_id must be positive, got {subject_id}")
+        all_items: list[Episode] = []
+        offset = 0
+        limit = 200
+        while True:
+            data = await self._request(
+                "GET", "/v0/episodes",
+                params={"subject_id": subject_id, "limit": limit, "offset": offset},
+            )
+            for item in data.get("data", []):
+                all_items.append(Episode(
+                    id=item["id"],
+                    ep=item.get("ep", 0) or 0,
+                    name=item.get("name", ""),
+                    name_cn=item.get("name_cn", ""),
+                    airdate=item.get("airdate", ""),
+                ))
+            total = data.get("total", 0)
+            offset += limit
+            if offset >= total:
+                break
+        return all_items
 
     async def get_collection(self, subject_id: int) -> Optional[dict]:
-        data = await self._request("GET", f"/v0/users/-/collections/{subject_id}")
+        username = await self._get_username()
+        data = await self._request("GET", f"/v0/users/{username}/collections/{subject_id}")
         return data if data else None
 
     async def get_watching_collections(self) -> list[CollectionItem]:
         """分页获取所有「在看」(type=3) 收藏。"""
+        username = await self._get_username()
         await self._rate_limit("search")
         all_items: list[CollectionItem] = []
         offset = 0
@@ -172,7 +193,7 @@ class BangumiClient:
         while True:
             data = await self._request(
                 "GET",
-                "/v0/users/-/collections",
+                f"/v0/users/{username}/collections",
                 params={"type": 3, "limit": limit, "offset": offset},
             )
             for item in data.get("data", []):
@@ -191,7 +212,7 @@ class BangumiClient:
             await self._rate_limit("search")
         return all_items
 
-    async def add_collection(self, subject_id: int, collection_type: int = CollectionType.DO) -> dict:
+    async def add_collection(self, subject_id: int, collection_type: int = CollectionType.DOING) -> dict:
         await self._rate_limit("update")
         return await self._request(
             "POST",
