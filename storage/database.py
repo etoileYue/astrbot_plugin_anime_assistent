@@ -182,6 +182,13 @@ class Database:
         return WatchLog(id=cursor.lastrowid, subject_id=subject_id,
                         episode=episode, source=source)
 
+    async def get_watched_eps(self) -> dict[int, int]:
+        """返回 {subject_id: max_watched_episode} 映射。"""
+        rows = await self.conn.execute_fetchall(
+            "SELECT subject_id, MAX(episode) FROM watch_log GROUP BY subject_id"
+        )
+        return {r[0]: r[1] for r in rows}
+
     # === interviews ===
 
     async def save_interview(self, subject_id: int, episode: int,

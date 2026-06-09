@@ -44,12 +44,22 @@ class SubscriptionHandler:
         subs = await self._db.list_subscriptions()
         if not subs:
             return "追番列表为空。使用 /sub add <id> 添加追番。"
+        watched_eps = await self._db.get_watched_eps()
         lines = ["当前追番列表："]
         for sub in subs:
             name = sub.subject_name_cn or sub.subject_name
             status = STATUS_MAP.get(sub.status, "未知")
-            eps = f"{sub.last_notified_ep}/{sub.total_eps}" if sub.total_eps else str(sub.last_notified_ep)
-            lines.append(f"  [{sub.subject_id}] {name} — {status} ({eps})")
+            watched = watched_eps.get(sub.subject_id, 0)
+            released = sub.last_notified_ep
+            if released > 0:
+                eps = f"{watched}/{released}"
+            else:
+                eps = str(watched)
+            # 连载中标记
+            airing = ""
+            if sub.total_eps and released < sub.total_eps:
+                airing = " 🔄"
+            lines.append(f"  [{sub.subject_id}] {name}{airing} — {status} ({eps})")
         return "\n".join(lines)
 
     async def remove_subscription(self, subject_id: int) -> str:
