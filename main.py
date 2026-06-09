@@ -24,8 +24,8 @@ class BangumiPlugin(Star):
         super().__init__(context)
         self.plugin_config = PluginConfig(config)
         self.db = Database()
-        self.scheduler = UpdateScheduler(self)
         self.interview_handler = InterviewHandler(self, self.db, self.plugin_config)
+        self.scheduler = UpdateScheduler(self, interview_handler=self.interview_handler)
         self._pending_confirms: dict[str, dict] = {}
 
     async def initialize(self):
@@ -35,8 +35,8 @@ class BangumiPlugin(Star):
         # 从 Bangumi 同步「在看」列表
         try:
             from .core.sync import sync_from_bangumi
-            total, added = await sync_from_bangumi(self.db, self.plugin_config)
-            logger.info(f"Bangumi 同步：新增 {added}，共 {total} 部在看番剧")
+            total, added, updated, removed, _ = await sync_from_bangumi(self.db, self.plugin_config)
+            logger.info(f"Bangumi 同步：新增 {added}，更新 {updated}，删除 {removed}，共 {total} 部在看番剧")
         except Exception as e:
             logger.warning(f"Bangumi 同步失败（不影响插件启动）：{e}")
 
@@ -65,8 +65,7 @@ class BangumiPlugin(Star):
             "  /sub add <番剧名称>  添加追番",
             "  /sub list            查看追番列表",
             "  /sub remove <subject_id>  移除追番",
-            "  /sub sync            从 Bangumi 同步「在看」列表",
-            "  /sync                手动触发番剧更新检查",
+            "  /sync                同步 Bangumi 数据并检查番剧更新",
             "  /notes list          查看观感记录",
             "  /bangumi             显示本帮助",
         ]
@@ -174,26 +173,14 @@ class BangumiPlugin(Star):
         result = await handler.remove_subscription(subject_id)
         yield event.plain_result(result)
 
-    @sub_group.command("sync")
-    async def cmd_sub_sync(self, event: AstrMessageEvent):
-        """从 Bangumi 同步「在看」列表到本地。用法：/sub sync"""
-        self._ensure_umo(event)
-        from .core.sync import sync_from_bangumi
-
-        total, added = await sync_from_bangumi(self.db, self.plugin_config)
-        if total == 0:
-            yield event.plain_result("Bangumi「在看」列表为空。")
-        else:
-            yield event.plain_result(f"同步完成：共 {total} 部在看番剧，新增 {added} 部。")
-
     # === 手动同步 ===
 
     @filter.command("sync")
     async def cmd_sync(self, event: AstrMessageEvent):
-        """手动触发番剧更新检查。"""
+        """从 Bangumi 同步数据并检查番剧更新。"""
         self._ensure_umo(event)
         await self.scheduler.check_once()
-        yield event.plain_result("已触发更新检查。")
+        yield event.plain_result("已同步 Bangumi 数据并完成更新检查。")
 
     # === 观感记录 ===
 

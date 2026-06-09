@@ -19,8 +19,17 @@ class InterviewHandler:
     async def try_start(self, event, subject_id: int, episode: int,
                         subject_name: str, subject_name_cn: str = "") -> str | None:
         """进度同步后尝试发起访谈。返回初始问题或 None。"""
-        umo = event.unified_msg_origin
+        return await self.try_start_auto(
+            umo=event.unified_msg_origin,
+            subject_id=subject_id,
+            episode=episode,
+            subject_name=subject_name,
+            subject_name_cn=subject_name_cn,
+        )
 
+    async def try_start_auto(self, umo: str, subject_id: int, episode: int,
+                             subject_name: str, subject_name_cn: str = "") -> str | None:
+        """自动触发访谈（无需 event 对象）。返回初始问题或 None。"""
         engine = InterviewEngine(
             self._plugin, self._db, self._config,
             subject_id=subject_id, episode=episode,
