@@ -56,7 +56,10 @@ class UpdateScheduler:
             if not episodes:
                 continue
 
-            latest_ep = max(ep.ep for ep in episodes if ep.ep > 0)
+            released = [ep for ep in episodes if ep.ep > 0 and (ep.name or ep.name_cn)]
+            if not released:
+                continue
+            latest_ep = max(ep.ep for ep in released)
             if latest_ep > sub.last_notified_ep:
                 await db.update_last_notified_ep(sub.id, latest_ep)
                 updated.append((sub, latest_ep))
