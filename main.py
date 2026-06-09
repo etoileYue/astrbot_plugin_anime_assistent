@@ -26,6 +26,7 @@ class BangumiPlugin(Star):
         self.db = Database()
         self.scheduler = UpdateScheduler(self)
         self.interview_handler = InterviewHandler(self, self.db, self.plugin_config)
+        self._pending_confirms: dict[str, dict] = {}
 
     async def initialize(self):
         self._data_path = str(Path(get_astrbot_data_path()) / "plugin_data" / self.name)
@@ -61,7 +62,7 @@ class BangumiPlugin(Star):
             "BangumiBot 可用命令：",
             "",
             "  /search <关键词>    搜索 Bangumi 番剧",
-            "  /sub add <subject_id>  添加追番",
+            "  /sub add <番剧名称>  添加追番",
             "  /sub list            查看追番列表",
             "  /sub remove <subject_id>  移除追番",
             "  /sub sync            从 Bangumi 同步「在看」列表",
@@ -105,12 +106,57 @@ class BangumiPlugin(Star):
         pass
 
     @sub_group.command("add")
-    async def cmd_sub_add(self, event: AstrMessageEvent, subject_id: int):
-        """添加追番。用法：/sub add <subject_id>"""
+    async def cmd_sub_add(self, event: AstrMessageEvent, *, name: str = ""):
+        """添加追番。用法：/sub add <番剧名称>"""
         self._ensure_umo(event)
+        if not name:
+            yield event.plain_result("用法：/sub add <番剧名称>\n例如：/sub add 葬送的芙莉莲")
+            return
+
         handler = SubscriptionHandler(self.db, self.plugin_config)
-        result = await handler.add_subscription(subject_id)
-        yield event.plain_result(result)
+        result = await handler.add_by_name(name)
+
+        if isinstance(result, str):
+            yield event.plain_result(result)
+            return
+
+        # 无精确匹配，调用 LLM 选择
+        search_text = result["search_text"]
+        options: list = result["options"]
+
+        from .llm.client import LLMClient
+
+        llm = LLMClient(self)
+        prompt = (
+            f"用户想添加追番，输入的名称是「{name}」。Bangumi搜索返回了以下结果：\n\n"
+            f"{search_text}\n\n"
+            f"请判断用户最可能指的是哪一部番剧，只回复数字序号（1-{len(options)}）。"
+            f"如果都不像，回复 0。"
+        )
+        try:
+            llm_resp = await llm.generate(prompt=prompt, umo=event.unified_msg_origin)
+            choice = int(llm_resp.strip())
+        except (ValueError, TypeError):
+            choice = 0
+
+        if 1 <= choice <= len(options):
+            subject = options[choice - 1]
+            display_name = subject.name_cn or subject.name
+            self._pending_confirms[event.unified_msg_origin] = {
+                "subject": subject,
+                "user_input": name,
+            }
+            yield event.plain_result(
+                f"你要添加的是「{display_name} [{subject.id}]」（{subject.eps}集）吗？\n"
+                f"回复「是」确认添加，回复「否」取消。"
+            )
+        else:
+            # LLM 无法确定，列出所有结果
+            lines = [f"未找到与「{name}」完全匹配的番剧，搜索结果如下：", ""]
+            lines.append(search_text)
+            lines.append("")
+            lines.append("请使用 /sub add <subject_id> 添加对应的番剧。")
+            yield event.plain_result("\n".join(lines))
 
     @sub_group.command("list")
     async def cmd_sub_list(self, event: AstrMessageEvent):
@@ -174,12 +220,36 @@ class BangumiPlugin(Star):
         yield event.plain_result("\n".join(lines))
 
     # === 消息路由（非命令消息） ===
-    # 优先级：访谈会话 > 进度同步
+    # 优先级：待确认 > 访谈会话 > 进度同步
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
-        """处理非命令消息：先检查访谈，再尝试进度同步。"""
+        """处理非命令消息：待确认 → 访谈会话 → 进度同步。"""
         self._ensure_umo(event)
+
+        # 0. 检查是否有待用户确认的添加请求
+        umo = event.unified_msg_origin
+        if umo in self._pending_confirms:
+            pending = self._pending_confirms[umo]
+            text = event.message_str.strip()
+            yes_words = {"是", "yes", "y", "确认", "确定", "嗯", "对", "好", "是的", "对的"}
+            no_words = {"否", "no", "n", "取消", "不要", "不是", "不", "不了"}
+            if text.lower() in yes_words:
+                handler = SubscriptionHandler(self.db, self.plugin_config)
+                result = await handler.confirm_add(pending["subject"], pending["user_input"])
+                del self._pending_confirms[umo]
+                yield event.plain_result(result)
+            elif text.lower() in no_words:
+                del self._pending_confirms[umo]
+                yield event.plain_result("已取消添加。")
+            else:
+                subject = pending["subject"]
+                display_name = subject.name_cn or subject.name
+                yield event.plain_result(
+                    f"请回复「是」确认添加或「否」取消。\n"
+                    f"你要添加的是：{display_name} [{subject.id}]"
+                )
+            return
 
         # 1. 检查是否有活跃的访谈会话
         if self.interview_handler.has_active_session():
