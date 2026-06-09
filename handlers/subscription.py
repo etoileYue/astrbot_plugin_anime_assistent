@@ -2,7 +2,7 @@
 
 import logging
 
-from ..api.bangumi import BangumiClient, Subject
+from ..api.bangumi import BangumiClient, CollectionType, Subject
 from ..storage.database import Database
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,21 @@ class SubscriptionHandler:
         await self._db.add_alias(subject.id, user_input)
 
         name = subject.name_cn or subject.name
-        return f"已添加追番：{name} [{subject.id}]（{subject.eps}集）"
+        msg = f"已添加追番：{name} [{subject.id}]（{subject.eps}集）"
+
+        if not self._config.bangumi_access_token:
+            return msg
+
+        try:
+            client = BangumiClient(self._config)
+            collection = await client.get_collection(subject.id)
+            if collection is None:
+                await client.add_collection(subject.id, CollectionType.DOING)
+            await client.close()
+        except Exception as e:
+            logger.warning(f"同步 Bangumi 收藏失败 (subject_id={subject.id}): {e}")
+
+        return msg
 
     async def add_subscription(self, subject_id: int) -> str:
         try:
