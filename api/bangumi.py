@@ -154,8 +154,8 @@ class BangumiClient:
         )
 
     async def get_episodes(self, subject_id: int) -> list[Episode]:
-        if subject_id <= 0:
-            raise ValueError(f"subject_id must be positive, got {subject_id}")
+        if not isinstance(subject_id, int) or subject_id <= 0:
+            raise ValueError(f"subject_id must be a positive int, got {subject_id!r}")
         all_items: list[Episode] = []
         offset = 0
         limit = 200

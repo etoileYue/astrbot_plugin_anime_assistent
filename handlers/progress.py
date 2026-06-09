@@ -51,6 +51,9 @@ class ProgressHandler:
             return None
 
         subject_id = alias_row.subject_id
+        if not isinstance(subject_id, int) or subject_id <= 0:
+            logger.warning(f"别名 {alias!r} 的 subject_id 无效 ({subject_id!r})")
+            return None
 
         sub = await self._db.get_subscription(subject_id)
         if not sub:

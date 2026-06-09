@@ -44,6 +44,9 @@ class UpdateScheduler:
         updated = []
 
         for sub in subs:
+            if not isinstance(sub.subject_id, int) or sub.subject_id <= 0:
+                logger.warning(f"跳过 {sub.subject_name}: subject_id 无效 ({sub.subject_id!r})")
+                continue
             try:
                 episodes = await client.get_episodes(sub.subject_id)
             except Exception as e:
