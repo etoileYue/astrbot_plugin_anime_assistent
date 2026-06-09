@@ -11,7 +11,7 @@ Bangumi API v0 是 bgm.tv 提供的 REST API，用于查询番剧信息、管理
 
 ## 认证方式
 
-访问 https://bgm.tv/settings/token 获取个人 Access Token。将 Token 配置到插件的 `bangumi_access_token` 字段即可。
+访问 https://next.bgm.tv/demo/access-token 获取个人 Access Token。将 Token 配置到插件的 `bangumi_access_token` 字段即可。
 
 所有需要认证的请求在 Header 中携带：
 ```
@@ -147,7 +147,7 @@ results = await client.search_subject("葬送的芙莉莲")
 
 4. **Token 失效**
    - 个人 Access Token 不会自动过期
-   - 如遇 401 错误，检查 Token 是否被手动撤销，重新从 https://bgm.tv/settings/token 获取
+   - 如遇 401 错误，检查 Token 是否被手动撤销，重新从 https://next.bgm.tv/demo/access-token 获取
 
 5. **异步要求**
    - AstrBot 要求使用异步 HTTP 库（httpx / aiohttp）

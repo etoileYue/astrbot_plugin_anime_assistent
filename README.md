@@ -15,16 +15,18 @@
 
 1. 将 `astrbot_plugin_bangumi/` 放入 AstrBot 的 `addons/` 目录
 2. 在 AstrBot WebUI 中启用插件
-3. 配置 Bangumi Access Token（从 https://bgm.tv/settings/token 获取）
+3. 配置 Bangumi Access Token（从 https://next.bgm.tv/demo/access-token 获取）
 
 ## 命令
 
 | 命令 | 说明 |
 |------|------|
+| `/bangumi` | 查看所有可用命令 |
 | `/search <关键词>` | 搜索 Bangumi 番剧 |
 | `/sub add <id>` | 添加追番 |
 | `/sub list` | 查看追番列表 |
 | `/sub remove <id>` | 移除追番 |
+| `/sub sync` | 从 Bangumi 同步「在看」列表 |
 | `/sync` | 手动触发更新检查 |
 | `/notes list` | 查看观感记录 |
 

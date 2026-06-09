@@ -46,7 +46,7 @@
 
 | # | 任务 | 细节 |
 |---|------|------|
-| 1.1 | 配置 Bangumi Token | 从 bgm.tv/settings/token 获取个人 Access Token |
+| 1.1 | 配置 Bangumi Token | 从 https://next.bgm.tv/demo/access-token 获取个人 Access Token |
 | 1.2 | 实现 Bearer Token 认证 | 将 Token 注入 HTTP 请求头 |
 | 1.3 | 实现 `api/bangumi.py` | search_subject, get_subject, get_episodes |
 | 1.4 | 实现收藏操作 | get_collection, add_collection, update_collection |

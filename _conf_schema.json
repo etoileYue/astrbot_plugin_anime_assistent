@@ -2,7 +2,7 @@
   "bangumi_access_token": {
     "description": "Bangumi Access Token",
     "type": "string",
-    "hint": "在 https://bgm.tv/settings/token 获取个人访问令牌"
+    "hint": "在 https://next.bgm.tv/demo/access-token 获取个人访问令牌"
   },
   "use_cn_mirror": {
     "description": "使用国内镜像（api.bangumi.one）",

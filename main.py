@@ -52,6 +52,25 @@ class BangumiPlugin(Star):
         """注册 UMO 以便调度器推送通知。"""
         self.scheduler.set_umo(event.unified_msg_origin)
 
+    # === 帮助 ===
+
+    @filter.command("bangumi")
+    async def cmd_bangumi(self, event: AstrMessageEvent):
+        """显示所有可用命令。用法：/bangumi"""
+        lines = [
+            "BangumiBot 可用命令：",
+            "",
+            "  /search <关键词>    搜索 Bangumi 番剧",
+            "  /sub add <subject_id>  添加追番",
+            "  /sub list            查看追番列表",
+            "  /sub remove <subject_id>  移除追番",
+            "  /sub sync            从 Bangumi 同步「在看」列表",
+            "  /sync                手动触发番剧更新检查",
+            "  /notes list          查看观感记录",
+            "  /bangumi             显示本帮助",
+        ]
+        yield event.plain_result("\n".join(lines))
+
     # === 搜索 ===
 
     @filter.command("search")
