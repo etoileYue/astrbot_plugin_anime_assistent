@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     total_eps   INTEGER,
     last_notified_ep INTEGER DEFAULT 0,
     watched_eps INTEGER DEFAULT 0,
+    airing      INTEGER DEFAULT 1,
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -72,7 +73,13 @@ class Database:
                 "ALTER TABLE subscriptions ADD COLUMN watched_eps INTEGER DEFAULT 0"
             )
         except Exception:
-            pass  # column already exists
+            pass
+        try:
+            await self._db.execute(
+                "ALTER TABLE subscriptions ADD COLUMN airing INTEGER DEFAULT 1"
+            )
+        except Exception:
+            pass
         await self._db.commit()
         logger.info(f"Database initialized at {self._path}")
 
@@ -87,19 +94,19 @@ class Database:
     async def add_subscription(
         self, subject_id: int, subject_name: str,
         subject_name_cn: str = "", total_eps: int = 0, status: int = 3,
-        watched_eps: int = 0,
+        watched_eps: int = 0, airing: int = 1,
     ) -> Subscription:
         await self.conn.execute(
             """INSERT OR REPLACE INTO subscriptions
-               (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps),
+               (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps, airing)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps, airing),
         )
         await self.conn.commit()
         return Subscription(
             subject_id=subject_id, subject_name=subject_name,
             subject_name_cn=subject_name_cn, total_eps=total_eps, status=status,
-            watched_eps=watched_eps,
+            watched_eps=watched_eps, airing=airing,
         )
 
     async def remove_subscription(self, subject_id: int):
@@ -119,7 +126,8 @@ class Database:
             return Subscription(
                 id=r[0], subject_id=r[1], subject_name=r[2],
                 subject_name_cn=r[3] or "", status=r[4], total_eps=r[5] or 0,
-                last_notified_ep=r[6] or 0, watched_eps=r[7] or 0, created_at=r[8],
+                last_notified_ep=r[6] or 0, watched_eps=r[7] or 0,
+                airing=r[8] if r[8] is not None else 1, created_at=r[9],
             )
         return None
 
@@ -132,20 +140,22 @@ class Database:
             results.append(Subscription(
                 id=r[0], subject_id=r[1], subject_name=r[2],
                 subject_name_cn=r[3] or "", status=r[4], total_eps=r[5] or 0,
-                last_notified_ep=r[6] or 0, watched_eps=r[7] or 0, created_at=r[8],
+                last_notified_ep=r[6] or 0, watched_eps=r[7] or 0, airing=r[8] if r[8] is not None else 1,
+                created_at=r[9],
             ))
         return results
 
     async def get_active_subscriptions(self) -> list[Subscription]:
         rows = await self.conn.execute_fetchall(
-            "SELECT * FROM subscriptions WHERE status = 3"
+            "SELECT * FROM subscriptions WHERE status = 3 AND airing = 1"
         )
         results = []
         for r in rows:
             results.append(Subscription(
                 id=r[0], subject_id=r[1], subject_name=r[2],
                 subject_name_cn=r[3] or "", status=r[4], total_eps=r[5] or 0,
-                last_notified_ep=r[6] or 0, watched_eps=r[7] or 0, created_at=r[8],
+                last_notified_ep=r[6] or 0, watched_eps=r[7] or 0, airing=r[8] if r[8] is not None else 1,
+                created_at=r[9],
             ))
         return results
 
@@ -160,6 +170,13 @@ class Database:
         await self.conn.execute(
             "UPDATE subscriptions SET watched_eps = ? WHERE subject_id = ?",
             (episode, subject_id),
+        )
+        await self.conn.commit()
+
+    async def update_airing(self, subject_id: int, airing: int):
+        await self.conn.execute(
+            "UPDATE subscriptions SET airing = ? WHERE subject_id = ?",
+            (airing, subject_id),
         )
         await self.conn.commit()
 

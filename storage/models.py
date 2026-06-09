@@ -14,6 +14,7 @@ class Subscription:
     total_eps: int = 0
     last_notified_ep: int = 0
     watched_eps: int = 0
+    airing: int = 1
     created_at: str = ""
 
 

@@ -106,6 +106,8 @@ class UpdateScheduler:
                     if latest_ep > sub.last_notified_ep:
                         await db.update_last_notified_ep(sub.id, latest_ep)
                         updated_subs.append((sub, latest_ep))
+                    if sub.total_eps and latest_ep >= sub.total_eps:
+                        await db.update_airing(sub.subject_id, 0)
             finally:
                 await client.close()
 

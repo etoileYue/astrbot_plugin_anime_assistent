@@ -41,6 +41,18 @@ class SubscriptionHandler:
             collection = await client.get_collection(subject.id)
             if collection is None:
                 await client.add_collection(subject.id, CollectionType.DOING)
+
+            if subject.eps:
+                try:
+                    episodes = await client.get_episodes(subject.id)
+                    released = [ep for ep in episodes if ep.ep > 0 and (ep.name or ep.name_cn)]
+                    if released:
+                        latest_ep = max(ep.ep for ep in released)
+                        if latest_ep >= subject.eps:
+                            await self._db.update_airing(subject.id, 0)
+                except Exception as e:
+                    logger.warning(f"获取 {subject.id} 剧集列表失败，跳过 airing 判断: {e}")
+
             await client.close()
         except Exception as e:
             logger.warning(f"同步 Bangumi 收藏失败 (subject_id={subject.id}): {e}")
@@ -111,10 +123,7 @@ class SubscriptionHandler:
                 eps = f"{watched}/{released}"
             else:
                 eps = str(watched)
-            # 连载中标记
-            airing = ""
-            if sub.total_eps and released < sub.total_eps:
-                airing = " 🔄"
+            airing = " 🔄" if sub.airing else ""
             lines.append(f"  [{sub.subject_id}] {name}{airing} — {status} ({eps})")
         return "\n".join(lines)
 

@@ -136,7 +136,7 @@ class BangumiClient:
                 eps=item.get("eps", 0) or 0,
                 rating=item.get("rating"),
                 images=item.get("images"),
-                air_date=item.get("air_date", ""),
+                air_date=item.get("date", ""),
             ))
         return results
 
@@ -150,7 +150,7 @@ class BangumiClient:
             eps=data.get("eps", 0) or 0,
             rating=data.get("rating"),
             images=data.get("images"),
-            air_date=data.get("air_date", ""),
+            air_date=data.get("date", ""),
         )
 
     async def get_episodes(self, subject_id: int) -> list[Episode]:
