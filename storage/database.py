@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     status      INTEGER DEFAULT 3,
     total_eps   INTEGER,
     last_notified_ep INTEGER DEFAULT 0,
+    watched_eps INTEGER DEFAULT 0,
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -66,6 +67,12 @@ class Database:
         self._db = await aiosqlite.connect(self._path)
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(SCHEMA)
+        try:
+            await self._db.execute(
+                "ALTER TABLE subscriptions ADD COLUMN watched_eps INTEGER DEFAULT 0"
+            )
+        except Exception:
+            pass  # column already exists
         await self._db.commit()
         logger.info(f"Database initialized at {self._path}")
 
@@ -80,17 +87,19 @@ class Database:
     async def add_subscription(
         self, subject_id: int, subject_name: str,
         subject_name_cn: str = "", total_eps: int = 0, status: int = 3,
+        watched_eps: int = 0,
     ) -> Subscription:
         await self.conn.execute(
             """INSERT OR REPLACE INTO subscriptions
-               (subject_id, subject_name, subject_name_cn, total_eps, status)
-               VALUES (?, ?, ?, ?, ?)""",
-            (subject_id, subject_name, subject_name_cn, total_eps, status),
+               (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps),
         )
         await self.conn.commit()
         return Subscription(
             subject_id=subject_id, subject_name=subject_name,
             subject_name_cn=subject_name_cn, total_eps=total_eps, status=status,
+            watched_eps=watched_eps,
         )
 
     async def remove_subscription(self, subject_id: int):
@@ -110,7 +119,7 @@ class Database:
             return Subscription(
                 id=r[0], subject_id=r[1], subject_name=r[2],
                 subject_name_cn=r[3] or "", status=r[4], total_eps=r[5] or 0,
-                last_notified_ep=r[6] or 0, created_at=r[7],
+                last_notified_ep=r[6] or 0, watched_eps=r[7] or 0, created_at=r[8],
             )
         return None
 
@@ -123,7 +132,7 @@ class Database:
             results.append(Subscription(
                 id=r[0], subject_id=r[1], subject_name=r[2],
                 subject_name_cn=r[3] or "", status=r[4], total_eps=r[5] or 0,
-                last_notified_ep=r[6] or 0, created_at=r[7],
+                last_notified_ep=r[6] or 0, watched_eps=r[7] or 0, created_at=r[8],
             ))
         return results
 
@@ -136,7 +145,7 @@ class Database:
             results.append(Subscription(
                 id=r[0], subject_id=r[1], subject_name=r[2],
                 subject_name_cn=r[3] or "", status=r[4], total_eps=r[5] or 0,
-                last_notified_ep=r[6] or 0, created_at=r[7],
+                last_notified_ep=r[6] or 0, watched_eps=r[7] or 0, created_at=r[8],
             ))
         return results
 
@@ -144,6 +153,13 @@ class Database:
         await self.conn.execute(
             "UPDATE subscriptions SET last_notified_ep = ? WHERE id = ?",
             (episode, sub_id),
+        )
+        await self.conn.commit()
+
+    async def update_watched_eps(self, subject_id: int, episode: int):
+        await self.conn.execute(
+            "UPDATE subscriptions SET watched_eps = ? WHERE subject_id = ?",
+            (episode, subject_id),
         )
         await self.conn.commit()
 

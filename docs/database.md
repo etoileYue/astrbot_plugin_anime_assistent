@@ -25,12 +25,14 @@ CREATE TABLE subscriptions (
     status      INTEGER DEFAULT 3,             -- 1=想看 2=看过 3=在看 4=搁置 5=抛弃
     total_eps   INTEGER,                       -- 总集数
     last_notified_ep INTEGER DEFAULT 0,        -- 最后一次通知的集数
+    watched_eps INTEGER DEFAULT 0,             -- 已看集数（来源：Bangumi ep_status）
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
 **说明**：
 - `last_notified_ep` 是更新检测的核心字段。定时任务获取最新集数后与此字段对比，若新集数更大则触发通知。
+- `watched_eps` 记录已看集数，来源为 Bangumi API 返回的 `ep_status` 字段。插件初始化时自动同步，进度消息同步时也会更新。
 - `subject_name` 是本地缓存，避免每次显示时都调 API。
 - `status` 值与 Bangumi 收藏类型一致。
 - 插件初始化时自动从 Bangumi 同步「在看」列表，也可通过 `/sub sync` 手动同步。

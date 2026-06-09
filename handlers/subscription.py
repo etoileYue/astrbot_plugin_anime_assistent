@@ -87,12 +87,11 @@ class SubscriptionHandler:
         subs = await self._db.list_subscriptions()
         if not subs:
             return "追番列表为空。使用 /sub add <id | 番剧名称> 添加追番。"
-        watched_eps = await self._db.get_watched_eps()
         lines = ["当前追番列表："]
         for sub in subs:
             name = sub.subject_name_cn or sub.subject_name
             status = STATUS_MAP.get(sub.status, "未知")
-            watched = watched_eps.get(sub.subject_id, 0)
+            watched = sub.watched_eps
             released = sub.last_notified_ep
             if released > 0:
                 eps = f"{watched}/{released}"

@@ -32,12 +32,13 @@ async def sync_from_bangumi(db: Database, config) -> tuple[int, int]:
         is_new = item.subject_id not in existing_ids
         await db.conn.execute(
             """INSERT OR IGNORE INTO subscriptions
-               (subject_id, subject_name, subject_name_cn, total_eps, status)
-               VALUES (?, ?, ?, ?, ?)""",
-            (item.subject_id, item.subject_name, item.subject_name_cn, item.eps, 3),
+               (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (item.subject_id, item.subject_name, item.subject_name_cn, item.eps, 3, item.ep_status),
         )
         if is_new:
             newly_added += 1
+        await db.update_watched_eps(item.subject_id, item.ep_status)
 
         if item.subject_name_cn:
             await db.add_alias(item.subject_id, item.subject_name_cn)

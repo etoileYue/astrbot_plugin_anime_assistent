@@ -96,6 +96,8 @@ class ProgressHandler:
         await self._db.log_watch(subject_id, episode, source="manual")
         if episode > sub.last_notified_ep:
             await self._db.update_last_notified_ep(sub.id, episode)
+        if episode > (sub.watched_eps or 0):
+            await self._db.update_watched_eps(subject_id, episode)
 
         name = sub.subject_name_cn or sub.subject_name
         eps_display = f"{episode}/{sub.total_eps}" if sub.total_eps else str(episode)
