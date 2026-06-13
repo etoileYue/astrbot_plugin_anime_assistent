@@ -98,27 +98,36 @@ Scheduler (每N小时触发)
   │     ├─ 创建访谈会话（subject_id + episode + user_id）
   │     └─ 状态 = "等待发起"
   │
-  ├─ 2. 生成初始问题：
-  │     ├─ 可选：调 Bangumi API 获取该集讨论（如有）
+  ├─ 2. 获取该集评论上下文：
+  │     ├─ 通过 Bangumi API GET /v0/episodes?subject_id={subject_id}
+  │     │   获取章节列表，找到 ep={episode} 对应的 episode_id
+  │     ├─ 查 scraper 缓存（key=episode_id, TTL=86400s）
+  │     ├─ 缓存未命中 → 爬取 https://bgm.tv/ep/{episode_id}
+  │     │   （使用 scraper/bangumi.py，>= 0.5s rate limit）
+  │     ├─ 解析 HTML（div#comment_list → BeautifulSoup → [Comment])
+  │     ├─ 写入缓存
+  │     └─ 格式化为评论文本（取前 N 条）
+  │
+  ├─ 3. 生成初始问题：
   │     ├─ 调 LLM，prompt 包含：
   │     │   - 番剧名称和集数
-  │     │   - 该集概要（如有）
-  │     │   - 指令：基于番剧特点生成开放式问题
+  │     │   - Bangumi 真实用户评论（如获取成功）
+  │     │   - 指令：基于真实评论中的讨论点生成开放式问题
   │     └─ 得到问题文本
   │
-  ├─ 3. 发送问题到 QQ
+  ├─ 4. 发送问题到 QQ
   │
-  ├─ 4. 用户回复：
+  ├─ 5. 用户回复：
   │     ├─ interview handler 接收消息
   │     ├─ 识别为访谈回复（通过会话状态判断）
   │     ├─ 存入 interviews 表
   │     └─ 调 LLM 分析回答，生成追问
   │
-  ├─ 5. 追问循环（2-3轮）：
+  ├─ 6. 追问循环（2-3轮）：
   │     ├─ 每轮：LLM 生成追问 → 用户回答 → 存入 DB
   │     └─ 结束条件：用户说"不聊了" / 达到最大轮数 / LLM 判断可结束
   │
-  └─ 6. 访谈结束：
+  └─ 7. 访谈结束：
         └─ 触发 Markdown 保存（见下一条）
 ```
 
@@ -146,6 +155,11 @@ Scheduler (每N小时触发)
 ```
         同步进度完成
              │
+             ▼
+      ┌──────────────┐
+      │  获取集评论    │
+      │  (爬取/缓存)   │
+      └──────┬───────┘
              ▼
       ┌──────────────┐
       │  生成初始问题  │

@@ -152,3 +152,102 @@ results = await client.search_subject("葬送的芙莉莲")
 5. **异步要求**
    - AstrBot 要求使用异步 HTTP 库（httpx / aiohttp）
    - 不要使用 `requests` 库
+
+## 剧集评论爬取（HTML 解析）
+
+### 背景
+
+Bangumi API v0 **没有**提供剧集评论/讨论的端点。但 Bangumi 的剧集页面（`https://bgm.tv/ep/{episode_id}`）包含「吐槽箱」——用户对该集内容的评论讨论，这些评论在服务端渲染到 HTML 中，可直接爬取解析。
+
+### 数据来源
+
+- **URL 模式**：`https://bgm.tv/ep/{episode_id}`
+- **episode_id**：通过 `GET /v0/episodes?subject_id={subject_id}` 获取，与 API 中的 `Episode.id` 一致
+- **加载方式**：所有评论在初始 HTML 中渲染（`div#comment_list`），无需 AJAX 翻页
+
+### HTML 结构
+
+每条评论的结构如下（在 `div#comment_list` 内）：
+
+```html
+<div id="post_{id}" class="... row_reply clearit" data-item-user="{username}">
+  <div class="post_actions re_info">
+    <div class="action">
+      <small><a href="#post_{id}" class="floor-anchor">#N</a> - 2023-6-29 23:22</small>
+    </div>
+  </div>
+  <a href="/user/{username}" class="avatar">...</a>
+  <div class="inner">
+    <strong><a href="/user/{username}" class="l post_author_{id}">{display_name}</a></strong>
+    <div class="reply_content">
+      <div class="message clearit">{评论文本}</div>
+    </div>
+  </div>
+</div>
+```
+
+**BeautifulSoup 选择器：**
+
+| 字段 | 选择器 | 说明 |
+|------|--------|------|
+| 评论容器 | `#comment_list div.row_reply[id^="post_"]` | 每条主评论 |
+| 用户名 | `strong a.l` | 显示名称 |
+| 评论文本 | `div.message` | `.get_text(strip=True)` |
+| 时间戳 | `small a.floor-anchor` | 格式 `#N - YYYY-MM-DD HH:MM` |
+| 楼层 | `small a.floor-anchor` | 提取 `#N` 部分 |
+
+### 解析方式
+
+```python
+# scraper/bangumi.py
+
+@dataclass
+class Comment:
+    username: str
+    text: str
+    timestamp: str
+    floor: int
+
+class BangumiScraper:
+    """爬取 Bangumi 剧集页面评论"""
+
+    def __init__(self, config: PluginConfig):
+        self._config = config
+        self._client: httpx.AsyncClient | None = None
+        self._cache: dict[int, tuple[float, list[Comment]]] = {}
+        self._cache_ttl: int = 86400  # 24h
+
+    async def get_episode_comments(
+        self, episode_id: int, limit: int = 20
+    ) -> list[Comment]: ...
+```
+
+### 频率限制
+
+- 爬取请求同样遵循 >= 0.5s 间隔（使用 `asyncio.sleep()`）
+- 由于启用内存缓存（TTL 24h），同一集的评论**不会**重复请求
+
+### 缓存策略
+
+- **位置**：`BangumiScraper` 实例内存（dict）
+- **Key**：`episode_id`
+- **TTL**：默认 86400s（24h），可通过配置调整
+- **依据**：已播出剧集的评论不再变化，24h TTL 安全且合理
+
+### 容错
+
+- 网络错误 / 解析失败 → 返回空列表，不影响主流程
+- 访谈引擎检测到空评论列表时，降级为不使用评论上下文的普通问题
+- HTML 结构变更 → 解析失败时记录 warning 日志并返回空列表
+
+### 与 api/bangumi.py 的关系
+
+`api/bangumi.py`（JSON REST API）和 `scraper/bangumi.py`（HTML 解析）是独立模块：
+
+| | api/bangumi.py | scraper/bangumi.py |
+|---|---|---|
+| 数据格式 | JSON | HTML |
+| 认证 | Bearer Token | 无需认证（公开页面） |
+| 基础 URL | `https://api.bgm.tv` | `https://bgm.tv` |
+| 用途 | 条目查询、收藏管理、进度同步 | 获取剧集评论上下文 |
+| 速率限制 | search >= 1s, update >= 0.5s | >= 0.5s |

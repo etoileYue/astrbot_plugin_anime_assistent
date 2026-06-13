@@ -20,6 +20,10 @@ astrbot_plugin_bangumi_assistent/
 │   ├── __init__.py
 │   └── bangumi.py             # Bangumi API 客户端
 │
+├── scraper/                   # HTML 爬取
+│   ├── __init__.py
+│   └── bangumi.py             # Bangumi 剧集评论爬取
+│
 ├── llm/                       # LLM 调用封装
 │   ├── __init__.py
 │   └── client.py              # 可替换的 LLM 客户端
@@ -80,7 +84,7 @@ astrbot_plugin_bangumi_assistent/
 - 根据用户回答生成追问
 - 判断访谈结束条件
 
-**依赖**：`llm/client.py`
+**依赖**：`llm/client.py`, `scraper/bangumi.py`
 
 ### api/bangumi.py — Bangumi API 客户端
 
@@ -90,6 +94,16 @@ astrbot_plugin_bangumi_assistent/
 - 数据格式转换（API 响应 → 内部数据结构）
 
 **依赖**：无（仅依赖 httpx）
+
+### scraper/bangumi.py — Bangumi 剧集评论爬取
+
+- 爬取 `https://bgm.tv/ep/{episode_id}` 页面 HTML
+- 从 `#comment_list` 中解析剧集评论（用户名、文本、时间、楼层）
+- 返回结构化 `Comment` 对象列表
+- 实现内存 TTL 缓存（默认 24h），避免重复请求
+- 爬取失败时返回空列表，不阻塞主流程
+
+**依赖**：`httpx`, `beautifulsoup4`
 
 ### llm/client.py — LLM 客户端
 
@@ -158,6 +172,8 @@ astrbot_plugin_bangumi_assistent/
 ├──────────────────┬──────────────┤
 │     api/         │    llm/      │  ← 外部接口层：API 封装
 ├──────────────────┴──────────────┤
+│           scraper/              │  ← 数据采集层：HTML 爬取
+├─────────────────────────────────┤
 │          storage/               │  ← 持久层：数据库、文件
 └─────────────────────────────────┘
 ```
