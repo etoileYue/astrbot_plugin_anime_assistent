@@ -1,9 +1,9 @@
-name: astrbot_plugin_bangumi
+name: astrbot_plugin_bangumi_assistant
 display_name: BangumiBot
 desc: 追番管理插件 — 搜索番剧、同步观看进度、LLM 观感访谈、自动生成 Markdown 记录
-author: etoile_yue
+author: etoileYue
 version: v0.1.0
-repo: https://github.com/etoile_yue/astrbot_plugin_bangumi
+repo: https://github.com/etoileYue/astrbot_plugin_anime_assistent
 astrbot_version: ">=4.16,<5"
 support_platforms:
   - qq_official
