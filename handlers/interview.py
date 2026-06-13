@@ -58,10 +58,11 @@ class InterviewHandler:
         """检查消息是否属于活跃访谈，如果是则处理回复。"""
         for (sid, ep), engine in list(self._active_sessions.items()):
             response = await engine.handle_answer(event.message_str, event.unified_msg_origin)
-            if engine.state == InterviewState.ENDED:
-                await self._save_markdown(engine)
-                del self._active_sessions[(sid, ep)]
-            return response
+            if response is not None:
+                if engine.state == InterviewState.ENDED:
+                    await self._save_markdown(engine)
+                    del self._active_sessions[(sid, ep)]
+                return response
 
         return None
 

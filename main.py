@@ -14,8 +14,8 @@ from .storage.database import Database
 
 
 @register(
-    "bangumibot",
-    "etoile_yue",
+    "astrbot_plugin_bangumi_assistant",
+    "etoileYue",
     "追番管理插件 — 搜索番剧、同步观看进度、LLM 观感访谈、自动生成 Markdown 记录",
     "0.1.0",
 )
