@@ -28,5 +28,10 @@ class PluginConfig:
         """观感记录目录。若用户未自定义则返回空字符串，由调用方使用 data_path 默认值。"""
         return self._config.get("anime_notes_dir", "")
 
+    @property
+    def scraper_comment_limit(self) -> int:
+        """爬虫每条剧集拉取的评论数上限（默认 30）。"""
+        return self._config.get("scraper_comment_limit", 30)
+
     def save(self):
         self._config.save_config()

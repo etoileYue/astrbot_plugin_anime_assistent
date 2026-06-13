@@ -14,6 +14,7 @@ class InterviewHandler:
         self._plugin = plugin
         self._db = db
         self._config = config
+        self._scraper = None  # 延迟初始化，避免未安装 bs4 时崩溃
         self._active_sessions: dict[tuple, InterviewEngine] = {}
 
     async def try_start(self, event, subject_id: int, episode: int,
@@ -30,10 +31,21 @@ class InterviewHandler:
     async def try_start_auto(self, umo: str, subject_id: int, episode: int,
                              subject_name: str, subject_name_cn: str = "") -> str | None:
         """自动触发访谈（无需 event 对象）。返回初始问题或 None。"""
+        if self._scraper is None:
+            try:
+                from ..scraper.bangumi import BangumiScraper
+                self._scraper = BangumiScraper(
+                    comment_limit=self._config.scraper_comment_limit,
+                    use_cn_mirror=self._config.use_cn_mirror,
+                )
+            except ImportError:
+                logger.warning("beautifulsoup4 未安装，评论爬取不可用")
+
         engine = InterviewEngine(
             self._plugin, self._db, self._config,
             subject_id=subject_id, episode=episode,
             subject_name=subject_name, subject_name_cn=subject_name_cn,
+            scraper=self._scraper,
         )
         question = await engine.start(umo)
         if question is None:

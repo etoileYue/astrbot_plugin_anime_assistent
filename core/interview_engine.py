@@ -30,10 +30,11 @@ class InterviewEngine:
     """单次访谈的状态机。每个 (subject_id, episode) 创建一个实例。"""
 
     def __init__(self, plugin, db, config, subject_id: int, episode: int,
-                 subject_name: str, subject_name_cn: str = ""):
+                 subject_name: str, subject_name_cn: str = "", scraper=None):
         self._plugin = plugin
         self._db = db
         self._config = config
+        self._scraper = scraper
         self.subject_id = subject_id
         self.episode = episode
         self.subject_name = subject_name_cn or subject_name
@@ -114,11 +115,49 @@ class InterviewEngine:
             self.state = InterviewState.ENDED
             return "聊得很开心！观感记录已保存。"
 
+    async def _get_comments_context(self) -> str:
+        """获取剧集评论上下文，失败时返回空字符串。"""
+        if self._scraper is None:
+            return ""
+        try:
+            from ..api.bangumi import BangumiClient
+
+            client = BangumiClient(self._config)
+            try:
+                episodes = await client.get_episodes(self.subject_id)
+            finally:
+                await client.close()
+
+            episode_id = None
+            for ep in episodes:
+                if ep.ep == self.episode:
+                    episode_id = ep.id
+                    break
+            if episode_id is None:
+                return ""
+
+            comments = await self._scraper.get_episode_comments(episode_id)
+            if not comments:
+                return ""
+
+            lines = []
+            for c in comments[:5]:
+                lines.append(f"- {c.username}: {c.text}")
+            return "\n".join(lines)
+        except Exception:
+            logger.warning("获取评论上下文失败", exc_info=True)
+            return ""
+
     async def _generate_initial_question(self, umo: str) -> str:
-        prompt = (
-            f"用户刚看完《{self.subject_name}》第{self.episode}集。\n"
-            f"请提出一个开放式问题，引导用户分享对这一集的观感和想法。"
-        )
+        comments_context = await self._get_comments_context()
+        prompt = f"用户刚看完《{self.subject_name}》第{self.episode}集。\n"
+        if comments_context:
+            prompt += (
+                f"\n以下是其他观众对这一集的讨论：\n{comments_context}\n\n"
+                f"请基于以上讨论点，提出一个开放式问题，引导用户分享对这一集的观感和想法。"
+            )
+        else:
+            prompt += "请提出一个开放式问题，引导用户分享对这一集的观感和想法。"
         return await self._llm_chat(prompt, umo)
 
     async def _generate_follow_up(self, answer: str, umo: str) -> str:
