@@ -50,29 +50,30 @@ class UpdateScheduler:
 
         # Step B: 对进度领先的条目自动触发访谈
         if progress_diffs and self._umo and self._interview_handler:
-            for diff in progress_diffs:
-                try:
-                    question = await self._interview_handler.try_start_auto(
-                        umo=self._umo,
-                        subject_id=diff["subject_id"],
-                        episode=diff["bangumi_eps"],
-                        subject_name=diff["subject_name"],
-                        subject_name_cn=diff.get("subject_name_cn", ""),
-                    )
-                    if question:
-                        name = diff.get("subject_name_cn") or diff["subject_name"]
-                        msg = (
-                            f"检测到你在 Bangumi 上《{name}》的观看进度已更新"
-                            f"（第{diff['bangumi_eps']}集）。\n\n"
-                            f"{question}\n\n"
-                            f"（随时可以说\"不聊了\"结束访谈）"
+            if not self._interview_handler.has_active_session():
+                for diff in progress_diffs:
+                    try:
+                        question = await self._interview_handler.try_start_auto(
+                            umo=self._umo,
+                            subject_id=diff["subject_id"],
+                            episode=diff["bangumi_eps"],
+                            subject_name=diff["subject_name"],
+                            subject_name_cn=diff.get("subject_name_cn", ""),
                         )
-                        chain = MessageChain().message(msg)
-                        await self._plugin.context.send_message(self._umo, chain)
-                except Exception as e:
-                    logger.error(
-                        f"自动访谈启动失败 ({diff['subject_name']}): {e}"
-                    )
+                        if question:
+                            name = diff.get("subject_name_cn") or diff["subject_name"]
+                            msg = (
+                                f"检测到你在 Bangumi 上《{name}》的观看进度已更新"
+                                f"（第{diff['bangumi_eps']}集）。\n\n"
+                                f"{question}\n\n"
+                                f"（随时可以说\"不聊了\"结束访谈）"
+                            )
+                            chain = MessageChain().message(msg)
+                            await self._plugin.context.send_message(self._umo, chain)
+                    except Exception as e:
+                        logger.error(
+                            f"自动访谈启动失败 ({diff['subject_name']}): {e}"
+                        )
 
         # Step C: 检查新剧集发布，比对 last_notified_ep 发送通知
         subs = await db.get_active_subscriptions()

@@ -27,6 +27,7 @@ class BangumiPlugin(Star):
         self.interview_handler = InterviewHandler(self, self.db, self.plugin_config)
         self.scheduler = UpdateScheduler(self, interview_handler=self.interview_handler)
         self._pending_confirms: dict[str, dict] = {}
+        self._cmd_words = {"sync", "search", "sub", "notes", "bangumi"}
 
     async def initialize(self):
         self._data_path = str(Path(get_astrbot_data_path()) / "plugin_data" / self.name)
@@ -213,6 +214,12 @@ class BangumiPlugin(Star):
     async def on_message(self, event: AstrMessageEvent):
         """处理非命令消息：待确认 → 访谈会话 → 进度同步。"""
         self._ensure_umo(event)
+
+        # 跳过命令消息（AstrBot 可能将命令消息同时路由到 on_message，
+        # 导致访谈引擎误将命令文本当作回答，污染对话上下文）
+        text = event.message_str.strip()
+        if text.startswith("/") or text in self._cmd_words:
+            return
 
         # 0. 检查是否有待用户确认的添加请求
         umo = event.unified_msg_origin
