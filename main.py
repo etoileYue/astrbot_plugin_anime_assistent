@@ -44,10 +44,6 @@ class BangumiPlugin(Star):
         asyncio.create_task(self.scheduler.run())
 
     def _get_notes_dir(self) -> str:
-        """返回观感记录目录：优先用户自定义，否则在 data_path 下。"""
-        custom = self.plugin_config.anime_notes_dir
-        if custom:
-            return custom
         return str(Path(self._data_path) / "anime_notes")
 
     def _ensure_umo(self, event: AstrMessageEvent):

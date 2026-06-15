@@ -19,10 +19,5 @@
     "description": "访谈最大追问轮数",
     "type": "int",
     "default": 3
-  },
-  "anime_notes_dir": {
-    "description": "观感记录保存目录（留空则使用插件 data 目录下的 anime_notes）",
-    "type": "string",
-    "default": ""
   }
 }
