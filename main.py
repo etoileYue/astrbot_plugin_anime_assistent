@@ -7,6 +7,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .core.config import PluginConfig
 from .core.scheduler import UpdateScheduler
+from .core.web_viewer import WebViewer
 from .handlers.interview import InterviewHandler
 from .handlers.progress import ProgressHandler
 from .handlers.subscription import SubscriptionHandler
@@ -26,12 +27,20 @@ class BangumiPlugin(Star):
         self.db = Database()
         self.interview_handler = InterviewHandler(self, self.db, self.plugin_config)
         self.scheduler = UpdateScheduler(self, interview_handler=self.interview_handler)
+        self.web_viewer: WebViewer | None = None
         self._pending_confirms: dict[str, dict] = {}
         self._cmd_words = {"sync", "search", "sub", "notes", "bangumi"}
 
     async def initialize(self):
         self._data_path = str(Path(get_astrbot_data_path()) / "plugin_data" / self.name)
         await self.db.initialize(self._data_path)
+
+        # Web 笔记查看器
+        self.web_viewer = WebViewer(
+            self._get_notes_dir(),
+            port=self.plugin_config.web_viewer_port,
+        )
+        await self.web_viewer.start()
 
         # 从 Bangumi 同步「在看」列表
         try:
@@ -65,6 +74,8 @@ class BangumiPlugin(Star):
             "  /sync                同步 Bangumi 数据并检查番剧更新",
             "  /notes list          查看观感记录",
             "  /bangumi             显示本帮助",
+            "",
+            "Web 笔记查看器：浏览器访问 http://<服务器IP>:58080",
         ]
         yield event.plain_result("\n".join(lines))
 
@@ -269,4 +280,6 @@ class BangumiPlugin(Star):
 
     async def terminate(self):
         await self.scheduler.stop()
+        if self.web_viewer:
+            await self.web_viewer.stop()
         await self.db.close()

@@ -28,5 +28,10 @@ class PluginConfig:
         """爬虫每条剧集拉取的评论数上限（默认 30）。"""
         return self._config.get("scraper_comment_limit", 30)
 
+    @property
+    def web_viewer_port(self) -> int:
+        """Web 笔记查看器端口，0 禁用。"""
+        return self._config.get("web_viewer_port", 58080)
+
     def save(self):
         self._config.save_config()
