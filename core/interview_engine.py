@@ -42,6 +42,7 @@ class InterviewEngine:
         self.round = 0
         self.max_rounds = config.max_interview_rounds
         self._history: list[tuple[str, str]] = []  # [(question, answer), ...]
+        self._comments_context: str = ""  # 缓存格式化后的评论，避免重复抓取
 
     async def start(self, umo: str) -> str | None:
         """生成初始问题并开始访谈。返回问题文本。"""
@@ -116,9 +117,11 @@ class InterviewEngine:
             return "聊得很开心！观感记录已保存。"
 
     async def _get_comments_context(self) -> str:
-        """获取剧集评论上下文，失败时返回空字符串。"""
+        """获取剧集评论上下文，失败时返回空字符串。结果会缓存在实例中。"""
         if self._scraper is None:
             return ""
+        if self._comments_context:
+            return self._comments_context
         try:
             from ..api.bangumi import BangumiClient
 
@@ -141,19 +144,20 @@ class InterviewEngine:
                 return ""
 
             lines = []
-            for c in comments[:5]:
+            for c in comments:
                 lines.append(f"- {c.username}: {c.text}")
-            return "\n".join(lines)
+            self._comments_context = "\n".join(lines)
+            return self._comments_context
         except Exception:
             logger.warning("获取评论上下文失败", exc_info=True)
             return ""
 
     async def _generate_initial_question(self, umo: str) -> str:
-        comments_context = await self._get_comments_context()
+        await self._get_comments_context()  # 触发抓取并缓存到 self._comments_context
         prompt = f"用户刚看完《{self.subject_name}》第{self.episode}集。\n"
-        if comments_context:
+        if self._comments_context:
             prompt += (
-                f"\n以下是其他观众对这一集的讨论：\n{comments_context}\n\n"
+                f"\n以下是其他观众对这一集的讨论：\n{self._comments_context}\n\n"
                 f"请基于以上讨论点，提出一个开放式问题，引导用户分享对这一集的观感和想法。"
             )
         else:
@@ -167,17 +171,30 @@ class InterviewEngine:
             if a:
                 context.append({"role": "user", "content": a})
         context.append({"role": "user", "content": answer})
-        return await self._llm_chat(
-            "基于上面的对话，提出一个自然的追问，深入探讨用户的观感。",
-            umo,
-            context,
-        )
+
+        if self._comments_context:
+            prompt = (
+                f"以下是一些观众对《{self.subject_name}》第{self.episode}集的讨论，"
+                f"可作为追问话题参考：\n{self._comments_context}\n\n"
+                f"基于上面的对话和以上参考讨论，提出一个自然的追问，深入探讨用户的观感。"
+            )
+        else:
+            prompt = "基于上面的对话，提出一个自然的追问，深入探讨用户的观感。"
+
+        return await self._llm_chat(prompt, umo, context)
 
     async def _generate_closing(self, umo: str) -> str:
-        prompt = (
-            f"用户刚聊完《{self.subject_name}》第{self.episode}集的观感。"
-            f"请说一句简短的收尾，感谢用户的分享。"
-        )
+        if self._comments_context:
+            prompt = (
+                f"用户刚聊完《{self.subject_name}》第{self.episode}集的观感。"
+                f"以下是一些观众对这一集的讨论：\n{self._comments_context}\n\n"
+                f"请说一句简短的收尾，可以呼应以上讨论中的观点，感谢用户的分享。"
+            )
+        else:
+            prompt = (
+                f"用户刚聊完《{self.subject_name}》第{self.episode}集的观感。"
+                f"请说一句简短的收尾，感谢用户的分享。"
+            )
         return await self._llm_chat(prompt, umo)
 
     async def _llm_chat(self, prompt: str, umo: str, context: list[dict] | None = None) -> str:
