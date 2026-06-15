@@ -209,8 +209,9 @@ class InterviewEngine:
         )
 
     async def _save_final_answer(self, answer: str):
-        if self._history:
-            self._history[-1] = (self._history[-1][0], answer)
+        # 用户主动结束访谈时，移除最后一个未回答的问题，避免结束语被当作正式回答写入记录
+        if self._history and not self._history[-1][1]:
+            self._history.pop()
 
     def get_qa_pairs(self) -> list[tuple[str, str]]:
         """返回完整的问答对列表，用于 Markdown 保存。"""
