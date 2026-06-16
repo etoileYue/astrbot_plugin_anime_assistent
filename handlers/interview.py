@@ -20,6 +20,15 @@ class RoutingInfo:
     answer: str
 
 
+@dataclass
+class ManualStartResult:
+    question: str | None = None
+    subject_id: int = 0
+    subject_name: str = ""
+    subject_name_cn: str = ""
+    error: str | None = None
+
+
 class InterviewHandler:
     def __init__(self, plugin, db: Database, config):
         self._plugin = plugin
@@ -64,6 +73,58 @@ class InterviewHandler:
 
         self._active_sessions[(subject_id, episode)] = engine
         return question
+
+    async def start_manual(self, umo: str, identifier: str, episode: int) -> ManualStartResult:
+        """手动触发访谈：解析标识符、获取番剧信息、开始访谈。
+
+        标识符可以是 subject_id（数字）或追番别名。
+        """
+        # 解析标识符
+        subject_id = await self._resolve_identifier(identifier)
+        if subject_id is None:
+            return ManualStartResult(
+                error=f"未找到「{identifier}」的追番记录。\n"
+                       f"请先使用 /sub add 添加追番，或使用 subject_id。"
+            )
+
+        # 获取番剧信息
+        sub = await self._db.get_subscription(subject_id)
+        if sub:
+            subject_name = sub.subject_name
+            subject_name_cn = sub.subject_name_cn or ""
+        else:
+            from ..api.bangumi import BangumiClient
+            client = BangumiClient(self._config)
+            try:
+                subject = await client.get_subject(subject_id)
+                subject_name = subject.name
+                subject_name_cn = subject.name_cn
+            except Exception as e:
+                return ManualStartResult(error=f"获取番剧信息失败：{e}")
+            finally:
+                await client.close()
+
+        # 发起访谈
+        question = await self.try_start_auto(
+            umo=umo,
+            subject_id=subject_id,
+            episode=episode,
+            subject_name=subject_name,
+            subject_name_cn=subject_name_cn,
+        )
+
+        if question is None:
+            name = subject_name_cn or subject_name
+            return ManualStartResult(
+                error=f"无法为《{name}》第{episode}集生成访谈问题，请检查 LLM 配置。"
+            )
+
+        return ManualStartResult(
+            question=question,
+            subject_id=subject_id,
+            subject_name=subject_name,
+            subject_name_cn=subject_name_cn,
+        )
 
     async def handle_message(self, event) -> str | None:
         """检查消息是否属于活跃访谈，如果是则处理回复。

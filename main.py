@@ -72,6 +72,7 @@ class BangumiPlugin(Star):
             "  /sub list            查看追番列表",
             "  /sub remove <subject_id>  移除追番",
             "  /sync                同步 Bangumi 数据并检查番剧更新",
+            "  /note <标识> <集数>  手动触发观感访谈",
             "  /notes list          查看观感记录",
             "  /bangumi             显示本帮助",
             "",
@@ -191,6 +192,56 @@ class BangumiPlugin(Star):
         yield event.plain_result("已同步 Bangumi 数据并完成更新检查。")
 
     # === 观感记录 ===
+
+    @filter.command("note")
+    async def cmd_note(self, event: AstrMessageEvent, *, args: str = ""):
+        """手动触发访谈记录观感。用法：/note <番剧标识> <集数>"""
+        self._ensure_umo(event)
+
+        if not args.strip():
+            yield event.plain_result(
+                "用法：/note <番剧标识> <集数>\n"
+                "番剧标识可以是 subject_id 或追番别名。\n"
+                "例如：/note 芙莉莲 6"
+            )
+            return
+
+        parts = args.strip().split(maxsplit=1)
+        if len(parts) < 2:
+            yield event.plain_result("请指定集数。用法：/note <番剧标识> <集数>")
+            return
+
+        try:
+            episode = int(parts[1].strip())
+        except ValueError:
+            yield event.plain_result(f"集数必须是数字，收到：{parts[1]}")
+            return
+        if episode <= 0:
+            yield event.plain_result("集数必须大于0。")
+            return
+
+        result = await self.interview_handler.start_manual(
+            umo=event.unified_msg_origin,
+            identifier=parts[0].strip(),
+            episode=episode,
+        )
+
+        if result.error:
+            yield event.plain_result(result.error)
+            return
+
+        name = result.subject_name_cn or result.subject_name
+        msg = (
+            f"来聊聊《{name}》第{episode}集吧！\n\n"
+            f"{result.question}\n\n"
+            f"（随时可以说\"不聊了\"结束访谈）"
+        )
+        hint = self.interview_handler.get_routing_hint(
+            exclude=(result.subject_id, episode)
+        )
+        if hint:
+            msg += "\n" + hint
+        yield event.plain_result(msg)
 
     @filter.command_group("notes")
     def notes_group(self):
