@@ -274,9 +274,13 @@ class BangumiPlugin(Star):
                     subject_name_cn=sync_result.subject_name_cn,
                 )
                 if question:
-                    yield event.plain_result(
-                        f'想聊聊这一集吗？\n\n{question}\n\n（随时可以说"不聊了"结束访谈）'
+                    msg = f'想聊聊这一集吗？\n\n{question}\n\n（随时可以说"不聊了"结束访谈）'
+                    hint = self.interview_handler.get_routing_hint(
+                        exclude=(sync_result.subject_id, sync_result.episode)
                     )
+                    if hint:
+                        msg += "\n" + hint
+                    yield event.plain_result(msg)
 
     async def terminate(self):
         await self.scheduler.stop()

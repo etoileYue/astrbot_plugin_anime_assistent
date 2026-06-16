@@ -92,6 +92,11 @@ class UpdateScheduler:
                             f"{question}\n\n"
                             f"（随时可以说\"不聊了\"结束访谈）"
                         )
+                        hint = self._interview_handler.get_routing_hint(
+                            exclude=(diff["subject_id"], diff["bangumi_eps"])
+                        )
+                        if hint:
+                            msg += "\n" + hint
                         chain = MessageChain().message(msg)
                         await self._plugin.context.send_message(umo, chain)
                 except Exception as e:
