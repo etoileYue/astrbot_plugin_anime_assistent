@@ -93,5 +93,7 @@ class InterviewHandler:
         )
         logger.info(f"访谈记录已保存: {filepath}")
 
-    def has_active_session(self) -> bool:
+    def has_active_session(self, subject_id: int = 0, episode: int = 0) -> bool:
+        if subject_id and episode:
+            return (subject_id, episode) in self._active_sessions
         return len(self._active_sessions) > 0

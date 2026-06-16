@@ -18,8 +18,30 @@ class UpdateScheduler:
         self._umo: str | None = None
 
     def set_umo(self, umo: str):
-        """注册用于主动推送消息的 unified_msg_origin。"""
+        """注册用于主动推送消息的 unified_msg_origin 并持久化。"""
         self._umo = umo
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._persist_umo(umo))
+        except RuntimeError:
+            pass
+
+    async def _persist_umo(self, umo: str):
+        try:
+            await self._plugin.db.set_task_state("last_umo", umo)
+        except Exception as e:
+            logger.warning(f"持久化 UMO 失败: {e}")
+
+    async def _get_umo(self) -> str | None:
+        """获取 UMO，优先内存，其次数据库。"""
+        if self._umo:
+            return self._umo
+        db = self._plugin.db
+        stored = await db.get_task_state("last_umo")
+        if stored:
+            self._umo = stored
+            logger.info("从数据库恢复了 UMO")
+        return self._umo
 
     async def run(self):
         self._running = True
@@ -49,31 +71,37 @@ class UpdateScheduler:
             total, added, updated, removed, progress_diffs = 0, 0, 0, 0, []
 
         # Step B: 对进度领先的条目自动触发访谈
-        if progress_diffs and self._umo and self._interview_handler:
-            if not self._interview_handler.has_active_session():
-                for diff in progress_diffs:
-                    try:
-                        question = await self._interview_handler.try_start_auto(
-                            umo=self._umo,
-                            subject_id=diff["subject_id"],
-                            episode=diff["bangumi_eps"],
-                            subject_name=diff["subject_name"],
-                            subject_name_cn=diff.get("subject_name_cn", ""),
+        umo = await self._get_umo()
+        if progress_diffs and umo and self._interview_handler:
+            for diff in progress_diffs:
+                if self._interview_handler.has_active_session(diff["subject_id"], diff["bangumi_eps"]):
+                    continue
+                try:
+                    question = await self._interview_handler.try_start_auto(
+                        umo=umo,
+                        subject_id=diff["subject_id"],
+                        episode=diff["bangumi_eps"],
+                        subject_name=diff["subject_name"],
+                        subject_name_cn=diff.get("subject_name_cn", ""),
+                    )
+                    if question:
+                        name = diff.get("subject_name_cn") or diff["subject_name"]
+                        msg = (
+                            f"检测到你在 Bangumi 上《{name}》的观看进度已更新"
+                            f"（第{diff['bangumi_eps']}集）。\n\n"
+                            f"{question}\n\n"
+                            f"（随时可以说\"不聊了\"结束访谈）"
                         )
-                        if question:
-                            name = diff.get("subject_name_cn") or diff["subject_name"]
-                            msg = (
-                                f"检测到你在 Bangumi 上《{name}》的观看进度已更新"
-                                f"（第{diff['bangumi_eps']}集）。\n\n"
-                                f"{question}\n\n"
-                                f"（随时可以说\"不聊了\"结束访谈）"
-                            )
-                            chain = MessageChain().message(msg)
-                            await self._plugin.context.send_message(self._umo, chain)
-                    except Exception as e:
-                        logger.error(
-                            f"自动访谈启动失败 ({diff['subject_name']}): {e}"
-                        )
+                        chain = MessageChain().message(msg)
+                        await self._plugin.context.send_message(umo, chain)
+                except Exception as e:
+                    logger.error(
+                        f"自动访谈启动失败 ({diff['subject_name']}): {e}"
+                    )
+        elif progress_diffs and not umo:
+            logger.warning(
+                f"检测到 {len(progress_diffs)} 条进度变化，但 UMO 未设置，跳过访谈触发"
+            )
 
         # Step C: 检查新剧集发布，比对 last_notified_ep 发送通知
         subs = await db.get_active_subscriptions()
@@ -112,14 +140,14 @@ class UpdateScheduler:
             finally:
                 await client.close()
 
-        if updated_subs and self._umo:
-            await self._send_notifications(updated_subs)
+        if updated_subs and umo:
+            await self._send_notifications(umo, updated_subs)
 
         # 更新检查时间
         now = datetime.now(timezone.utc).isoformat()
         await db.set_task_state("last_check_time", now)
 
-    async def _send_notifications(self, updated: list):
+    async def _send_notifications(self, umo: str, updated: list):
         lines = ["【番剧更新提醒】"]
         for sub, latest_ep in updated:
             name = sub.subject_name_cn or sub.subject_name
@@ -129,7 +157,7 @@ class UpdateScheduler:
         msg = "\n".join(lines).strip()
         chain = MessageChain().message(msg)
         try:
-            await self._plugin.context.send_message(self._umo, chain)
+            await self._plugin.context.send_message(umo, chain)
         except Exception as e:
             logger.error(f"发送通知失败: {e}")
 
