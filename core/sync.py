@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from ..api.bangumi import BangumiClient
+from ..api.bangumi import BangumiClient, CollectionType
 from ..storage.database import Database
 
 logger = logging.getLogger(__name__)
@@ -90,9 +90,34 @@ async def sync_from_bangumi(db: Database, config) -> tuple[int, int, int, int, l
             await db.add_alias(item.subject_id, str(item.subject_id))
 
         # 删除本地有但 Bangumi「在看」列表中没有的条目
+        # 但如果条目是被移入「看过」(type=2)，说明用户已看完，仍需触发访谈。
         removed = 0
         stale_ids = existing_ids - bangumi_ids
         for sid in stale_ids:
+            try:
+                await asyncio.sleep(0.5)
+                coll = await client.get_collection(sid)
+                if coll and coll.get("type") == CollectionType.DONE:
+                    sub = next((s for s in existing if s.subject_id == sid), None)
+                    old_eps = old_watched.get(sid, 0)
+                    bangumi_eps = coll.get("ep_status", 0) or 0
+                    # 以 Bangumi 记录的集数为准，若不可用则退到本地记录
+                    episode = bangumi_eps or old_eps
+                    if episode > 0:
+                        progress_diffs.append({
+                            "subject_id": sid,
+                            "subject_name": sub.subject_name if sub else "",
+                            "subject_name_cn": sub.subject_name_cn if sub else "",
+                            "bangumi_eps": episode,
+                            "local_eps": old_eps,
+                        })
+                        logger.info(
+                            f"条目 {sid} 已从「在看」移出并标记为看过，"
+                            f"进度 {old_eps} → {episode}，触发访谈"
+                        )
+            except Exception as e:
+                logger.warning(f"检查已移除条目 {sid} 的收藏状态失败: {e}")
+
             await db.conn.execute("DELETE FROM subscriptions WHERE subject_id = ?", (sid,))
             await db.conn.execute("DELETE FROM aliases WHERE subject_id = ?", (sid,))
             removed += 1
