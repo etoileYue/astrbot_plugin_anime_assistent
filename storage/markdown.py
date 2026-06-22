@@ -135,3 +135,53 @@ class MarkdownStorage:
         else:
             content = content.rstrip() + "\n" + summary_section
         filepath.write_text(content, encoding="utf-8")
+
+    def delete_episode(self, anime_name: str, season: str, episode: int) -> bool:
+        """删除指定剧集的所有观感记录（包括二刷）。
+
+        返回 True 表示成功删除，False 表示文件或剧集不存在。
+        """
+        content = self.load_anime(anime_name, season)
+        if content is None:
+            return False
+
+        sections = content.split("## ")
+        filtered = [s for s in sections if not s.startswith(f"ep{episode:02d}")]
+
+        if len(filtered) == len(sections):
+            return False
+
+        season_dir = self._base_dir / season
+        filename = self._sanitize_filename(anime_name) + ".md"
+        filepath = season_dir / filename
+        filepath.write_text("## ".join(filtered), encoding="utf-8")
+        logger.info(f"Deleted episode {episode} from {filepath}")
+        return True
+
+    def append_to_episode(self, anime_name: str, season: str,
+                          episode: int, text: str) -> bool:
+        """在指定剧集最后一次记录末尾追加手动笔记。
+
+        返回 True 表示成功追加，False 表示文件或剧集不存在。
+        """
+        content = self.load_anime(anime_name, season)
+        if content is None:
+            return False
+
+        sections = content.split("## ")
+        last_idx = None
+        for i, sec in enumerate(sections):
+            if sec.startswith(f"ep{episode:02d}"):
+                last_idx = i
+
+        if last_idx is None:
+            return False
+
+        sections[last_idx] += f"\n\n> **手动追加:** {text}\n"
+
+        season_dir = self._base_dir / season
+        filename = self._sanitize_filename(anime_name) + ".md"
+        filepath = season_dir / filename
+        filepath.write_text("## ".join(sections), encoding="utf-8")
+        logger.info(f"Appended note to episode {episode} in {filepath}")
+        return True

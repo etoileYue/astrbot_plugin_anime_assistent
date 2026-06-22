@@ -76,7 +76,7 @@ class BangumiPlugin(Star):
             "  /notes list          查看观感记录",
             "  /bangumi             显示本帮助",
             "",
-            "Web 笔记查看器：浏览器访问 http://<服务器IP>:58080",
+            "Web 笔记查看器：浏览器访问 http://<服务器IP>:58080（支持编辑）",
         ]
         yield event.plain_result("\n".join(lines))
 
