@@ -199,3 +199,144 @@ class MarkdownStorage:
         filepath.write_text(content, encoding="utf-8")
         logger.info(f"Saved full file: {filepath}")
         return True
+
+    # ------------------------------------------------------------------
+    # 路径操作方法 — 基于相对路径，用于 WebEditor 文件管理
+    # ------------------------------------------------------------------
+
+    def _resolve_path(self, sub_path: str) -> Path:
+        """将相对路径解析为绝对路径，并检查路径遍历攻击。
+
+        Raises:
+            ValueError: 路径尝试逃逸 base_dir 时抛出。
+        """
+        # 清理路径中的危险片段
+        cleaned = sub_path.replace("\\", "/")
+        if cleaned.startswith("/"):
+            cleaned = cleaned.lstrip("/")
+
+        resolved = (self._base_dir / cleaned).resolve()
+        if not str(resolved).startswith(str(self._base_dir.resolve())):
+            raise ValueError(f"Path traversal denied: {sub_path}")
+        return resolved
+
+    def list_directory(self, sub_path: str = "") -> dict:
+        """列出子目录下的文件和文件夹（仅 .md 文件）。
+
+        Returns:
+            {"dirs": [name, ...], "files": [name, ...]}，均按名称排序。
+        """
+        target = self._resolve_path(sub_path) if sub_path else self._base_dir
+        if not target.exists():
+            return {"dirs": [], "files": []}
+
+        dirs = sorted(
+            [d.name for d in target.iterdir() if d.is_dir()],
+            key=str.lower,
+        )
+        files = sorted(
+            [p.name for p in target.glob("*.md")],
+            key=str.lower,
+        )
+        return {"dirs": dirs, "files": files}
+
+    def load_file(self, sub_path: str) -> str | None:
+        """通过相对路径加载文件内容。"""
+        try:
+            filepath = self._resolve_path(sub_path)
+        except ValueError:
+            return None
+        if not filepath.exists() or not filepath.is_file():
+            return None
+        return filepath.read_text(encoding="utf-8")
+
+    def save_file(self, sub_path: str, content: str) -> bool:
+        """覆盖写入文件内容。父目录不存在时自动创建。"""
+        try:
+            filepath = self._resolve_path(sub_path)
+        except ValueError:
+            return False
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        filepath.write_text(content, encoding="utf-8")
+        logger.info(f"Saved file: {filepath}")
+        return True
+
+    def create_file(self, parent_path: str, filename: str,
+                    content: str = "") -> tuple[bool, str]:
+        """在指定目录下创建新的 .md 文件。
+
+        Args:
+            parent_path: 父目录相对路径（空字符串表示根目录）。
+            filename: 文件名（自动添加 .md 扩展名，不含扩展名时）。
+
+        Returns:
+            (True, relative_path) 成功时； (False, error_message) 失败时。
+        """
+        if not filename.endswith(".md"):
+            filename += ".md"
+        filename = self._sanitize_filename(filename)
+
+        try:
+            parent = self._resolve_path(parent_path) if parent_path else self._base_dir
+        except ValueError:
+            return False, "无效的目录路径"
+        parent.mkdir(parents=True, exist_ok=True)
+
+        filepath = parent / filename
+        if filepath.exists():
+            return False, f"文件 {filename} 已存在"
+
+        filepath.write_text(content or "", encoding="utf-8")
+        # 返回相对于 base_dir 的路径
+        rel = str(filepath.relative_to(self._base_dir))
+        logger.info(f"Created file: {rel}")
+        return True, rel
+
+    def create_directory(self, parent_path: str, dirname: str) -> tuple[bool, str]:
+        """在指定目录下创建子目录。
+
+        Returns:
+            (True, relative_path) 成功时； (False, error_message) 失败时。
+        """
+        dirname = self._sanitize_filename(dirname)
+
+        try:
+            parent = self._resolve_path(parent_path) if parent_path else self._base_dir
+        except ValueError:
+            return False, "无效的目录路径"
+        parent.mkdir(parents=True, exist_ok=True)
+
+        dirpath = parent / dirname
+        if dirpath.exists():
+            return False, f"目录 {dirname} 已存在"
+
+        dirpath.mkdir()
+        rel = str(dirpath.relative_to(self._base_dir))
+        logger.info(f"Created directory: {rel}")
+        return True, rel
+
+    def delete_path(self, sub_path: str) -> tuple[bool, str]:
+        """删除文件或空目录。
+
+        Returns:
+            (True, success_message) 成功时； (False, error_message) 失败时。
+        """
+        try:
+            target = self._resolve_path(sub_path)
+        except ValueError:
+            return False, "无效的路径"
+
+        if not target.exists():
+            return False, "文件或目录不存在"
+
+        if target.is_dir():
+            try:
+                target.rmdir()  # 只删除空目录
+                logger.info(f"Deleted directory: {sub_path}")
+                return True, f"已删除目录 {target.name}"
+            except OSError:
+                return False, f"目录 {target.name} 非空，无法删除"
+        else:
+            target.unlink()
+            logger.info(f"Deleted file: {sub_path}")
+            return True, f"已删除文件 {target.name}"

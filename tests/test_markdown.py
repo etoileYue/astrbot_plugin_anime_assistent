@@ -422,3 +422,185 @@ class TestSaveAnime:
         assert "编辑后的回答" in loaded
         assert "## ep02" in loaded
         assert "新问题" in loaded
+
+
+# ---------------------------------------------------------------------------
+# 路径操作方法测试（WebEditor 文件管理）
+# ---------------------------------------------------------------------------
+
+
+class TestPathMethods:
+
+    def test_resolve_path_normal(self, tmp_path):
+        """正常路径解析。"""
+        storage = _make_storage(tmp_path)
+        resolved = storage._resolve_path("2026.4/test.md")
+        assert resolved == tmp_path / "2026.4" / "test.md"
+
+    def test_resolve_path_traversal_denied(self, tmp_path):
+        """拒绝 .. 路径遍历。"""
+        storage = _make_storage(tmp_path)
+        with pytest.raises(ValueError, match="traversal"):
+            storage._resolve_path("../../../etc/passwd")
+
+    def test_resolve_path_absolute_stripped(self, tmp_path):
+        """绝对路径前缀被剥离，解析到 base_dir 下。"""
+        storage = _make_storage(tmp_path)
+        resolved = storage._resolve_path("/2026.4/test.md")
+        assert resolved == tmp_path / "2026.4" / "test.md"
+
+    def test_list_directory_empty(self, tmp_path):
+        """空目录返回空列表。"""
+        storage = _make_storage(tmp_path)
+        result = storage.list_directory("")
+        assert result == {"dirs": [], "files": []}
+
+    def test_list_directory_with_content(self, tmp_path):
+        """列出目录中的文件和子目录。"""
+        storage = _make_storage(tmp_path)
+        storage.save_file("a.md", "content a")
+        storage.save_file("b.md", "content b")
+        storage.create_directory("", "subdir")
+
+        result = storage.list_directory("")
+        assert result["dirs"] == ["subdir"]
+        assert result["files"] == ["a.md", "b.md"]
+
+    def test_list_directory_filters_non_md(self, tmp_path):
+        """只列出 .md 文件，其他文件被忽略。"""
+        storage = _make_storage(tmp_path)
+        storage.save_file("note.md", "markdown")
+        # 创建一个非 .md 文件
+        (storage._base_dir / "data.txt").write_text("text")
+        (storage._base_dir / "image.png").write_text("png", encoding="utf-8")
+
+        result = storage.list_directory("")
+        assert result["files"] == ["note.md"]
+        # data.txt 和 image.png 不会被列出
+
+    def test_list_subdirectory(self, tmp_path):
+        """列出子目录内容。"""
+        storage = _make_storage(tmp_path)
+        storage.save_file("2026.4/a.md", "a")
+        storage.save_file("2026.4/b.md", "b")
+        storage.create_directory("2026.4", "sub")
+
+        result = storage.list_directory("2026.4")
+        assert result["dirs"] == ["sub"]
+        assert result["files"] == ["a.md", "b.md"]
+
+    def test_load_file_exists(self, tmp_path):
+        """加载存在的文件。"""
+        storage = _make_storage(tmp_path)
+        storage.save_file("test.md", "hello world")
+        content = storage.load_file("test.md")
+        assert content == "hello world"
+
+    def test_load_file_not_exists(self, tmp_path):
+        """加载不存在的文件返回 None。"""
+        storage = _make_storage(tmp_path)
+        assert storage.load_file("nonexistent.md") is None
+
+    def test_save_file_new(self, tmp_path):
+        """保存新文件，自动创建父目录。"""
+        storage = _make_storage(tmp_path)
+        result = storage.save_file("sub/dir/file.md", "content")
+        assert result is True
+        loaded = storage.load_file("sub/dir/file.md")
+        assert loaded == "content"
+
+    def test_save_file_overwrite(self, tmp_path):
+        """覆盖已有文件。"""
+        storage = _make_storage(tmp_path)
+        storage.save_file("test.md", "original")
+        storage.save_file("test.md", "modified")
+        assert storage.load_file("test.md") == "modified"
+
+    def test_create_file_success(self, tmp_path):
+        """成功创建新文件。"""
+        storage = _make_storage(tmp_path)
+        ok, path = storage.create_file("", "新笔记")
+        assert ok is True
+        assert path == "新笔记.md"
+        assert storage.load_file("新笔记.md") == ""
+        assert (storage._base_dir / "新笔记.md").exists()
+
+    def test_create_file_in_subdir(self, tmp_path):
+        """在子目录中创建文件。"""
+        storage = _make_storage(tmp_path)
+        storage.create_directory("", "diary")
+
+        ok, path = storage.create_file("diary", "我的日记")
+        assert ok is True
+        assert path == "diary/我的日记.md"
+        assert storage.load_file("diary/我的日记.md") == ""
+
+    def test_create_file_already_exists(self, tmp_path):
+        """文件已存在时创建失败。"""
+        storage = _make_storage(tmp_path)
+        storage.create_file("", "note")
+        ok, msg = storage.create_file("", "note")
+        assert ok is False
+        assert "已存在" in msg
+
+    def test_create_directory_success(self, tmp_path):
+        """成功创建目录。"""
+        storage = _make_storage(tmp_path)
+        ok, path = storage.create_directory("", "new-folder")
+        assert ok is True
+        assert path == "new-folder"
+        assert (storage._base_dir / "new-folder").is_dir()
+
+    def test_create_directory_nested(self, tmp_path):
+        """创建嵌套目录。"""
+        storage = _make_storage(tmp_path)
+        storage.create_directory("", "a")
+        ok, path = storage.create_directory("a", "b")
+        assert ok is True
+        assert path == "a/b"
+        assert (storage._base_dir / "a" / "b").is_dir()
+
+    def test_create_directory_already_exists(self, tmp_path):
+        """目录已存在时创建失败。"""
+        storage = _make_storage(tmp_path)
+        storage.create_directory("", "existing")
+        ok, msg = storage.create_directory("", "existing")
+        assert ok is False
+        assert "已存在" in msg
+
+    def test_delete_file(self, tmp_path):
+        """删除文件。"""
+        storage = _make_storage(tmp_path)
+        storage.save_file("remove.md", "to be deleted")
+        assert (storage._base_dir / "remove.md").exists()
+
+        ok, msg = storage.delete_path("remove.md")
+        assert ok is True
+        assert "已删除" in msg
+        assert not (storage._base_dir / "remove.md").exists()
+
+    def test_delete_empty_dir(self, tmp_path):
+        """删除空目录。"""
+        storage = _make_storage(tmp_path)
+        storage.create_directory("", "empty-dir")
+
+        ok, msg = storage.delete_path("empty-dir")
+        assert ok is True
+        assert not (storage._base_dir / "empty-dir").exists()
+
+    def test_delete_nonempty_dir_denied(self, tmp_path):
+        """非空目录拒绝删除。"""
+        storage = _make_storage(tmp_path)
+        storage.save_file("nonempty/file.md", "content")
+
+        ok, msg = storage.delete_path("nonempty")
+        assert ok is False
+        assert "非空" in msg
+        assert (storage._base_dir / "nonempty").exists()
+
+    def test_delete_nonexistent(self, tmp_path):
+        """删除不存在的路径。"""
+        storage = _make_storage(tmp_path)
+        ok, msg = storage.delete_path("does-not-exist.md")
+        assert ok is False
+        assert "不存在" in msg
