@@ -33,5 +33,10 @@ class PluginConfig:
         """Web 笔记查看器端口，0 禁用。"""
         return self._config.get("web_viewer_port", 58080)
 
+    @property
+    def web_editor_port(self) -> int:
+        """Web 笔记编辑器端口，0 禁用。"""
+        return self._config.get("web_editor_port", 58081)
+
     def save(self):
         self._config.save_config()

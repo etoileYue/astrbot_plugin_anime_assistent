@@ -24,5 +24,10 @@
     "description": "Web 笔记查看器端口（0 禁用）",
     "type": "int",
     "default": 58080
+  },
+  "web_editor_port": {
+    "description": "Web 笔记编辑器端口（0 禁用）",
+    "type": "int",
+    "default": 58081
   }
 }

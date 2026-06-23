@@ -185,3 +185,17 @@ class MarkdownStorage:
         filepath.write_text("## ".join(sections), encoding="utf-8")
         logger.info(f"Appended note to episode {episode} in {filepath}")
         return True
+
+    def save_anime(self, anime_name: str, season: str, content: str) -> bool:
+        """全量覆盖番剧 Markdown 文件。
+
+        用于编辑器全文本保存。目录不存在时自动创建。
+        始终返回 True（写入操作不会失败，除非磁盘满了）。
+        """
+        season_dir = self._base_dir / season
+        season_dir.mkdir(parents=True, exist_ok=True)
+        filename = self._sanitize_filename(anime_name) + ".md"
+        filepath = season_dir / filename
+        filepath.write_text(content, encoding="utf-8")
+        logger.info(f"Saved full file: {filepath}")
+        return True

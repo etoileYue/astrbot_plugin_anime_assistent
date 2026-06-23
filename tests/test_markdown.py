@@ -355,3 +355,70 @@ class TestRoundtrip:
         assert "初刷" not in content
         assert "二刷" not in content
         assert "## ep01" not in content
+
+
+# ---------------------------------------------------------------------------
+# save_anime 测试
+# ---------------------------------------------------------------------------
+
+
+class TestSaveAnime:
+
+    def test_save_new_file(self, tmp_path):
+        """保存新文件——目录不存在时自动创建。"""
+        storage = _make_storage(tmp_path)
+
+        content = "---\nanime: 测试番剧\n---\n\n# 测试番剧\n\n## ep01\n\n测试内容\n"
+        result = storage.save_anime("测试番剧", "2026.4", content)
+        assert result is True
+
+        loaded = storage.load_anime("测试番剧", "2026.4")
+        assert loaded == content
+
+    def test_save_overwrites_existing(self, tmp_path):
+        """保存覆盖已有文件。"""
+        storage = _make_storage(tmp_path)
+        _write_anime(storage, "葬送的芙莉莲", "2026.4")
+        _add_episode(storage, "葬送的芙莉莲", "2026.4", 1)
+
+        original = storage.load_anime("葬送的芙莉莲", "2026.4")
+        assert "## ep01" in original
+
+        new_content = "---\nanime: 葬送的芙莉莲\n---\n\n# 葬送的芙莉莲\n\n修改后的内容\n"
+        result = storage.save_anime("葬送的芙莉莲", "2026.4", new_content)
+        assert result is True
+
+        loaded = storage.load_anime("葬送的芙莉莲", "2026.4")
+        assert loaded == new_content
+        assert "## ep01" not in loaded
+
+    def test_save_edit_then_view_roundtrip(self, tmp_path):
+        """模拟编辑流程：创建 → 编辑 → 验证。"""
+        storage = _make_storage(tmp_path)
+
+        # 先通过正常流程创建
+        storage.save_episode(
+            anime_name="葬送的芙莉莲",
+            season="2026.4",
+            episode=1,
+            qa_pairs=[("Q1", "A1")],
+            subject_id=400602,
+        )
+
+        # 加载全文
+        content = storage.load_anime("葬送的芙莉莲", "2026.4")
+        assert "## ep01" in content
+        assert "Q1" in content
+
+        # 模拟编辑：修改内容
+        edited = content.replace("A1", "编辑后的回答")
+        edited += "\n## ep02\n\n> **Q1:** 新问题\n>\n> **A1:** 新回答\n\n"
+
+        result = storage.save_anime("葬送的芙莉莲", "2026.4", edited)
+        assert result is True
+
+        # 验证编辑结果
+        loaded = storage.load_anime("葬送的芙莉莲", "2026.4")
+        assert "编辑后的回答" in loaded
+        assert "## ep02" in loaded
+        assert "新问题" in loaded

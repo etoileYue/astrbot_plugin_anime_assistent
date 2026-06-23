@@ -1,10 +1,7 @@
 """Web 笔记查看器 — 通过浏览器浏览观感记录。"""
 
-import html as html_mod
 import logging
-import re
 from pathlib import Path
-from urllib.parse import quote
 
 import yaml
 import markdown
@@ -122,42 +119,6 @@ footer {
   text-align: center; color: var(--muted); font-size: 12px;
   padding: 40px 0 20px; border-top: 1px solid var(--border); margin-top: 60px;
 }
-
-/* flash messages */
-.flash {
-  padding: 12px 16px; border-radius: var(--radius); margin-bottom: 20px;
-  font-size: 14px; text-align: center;
-}
-.flash-success { background: #e8f5e9; color: #2e7d32; border: 1px solid #c8e6c9; }
-.flash-error   { background: #ffebee; color: #c62828; border: 1px solid #ffcdd2; }
-
-/* episode action buttons */
-.ep-actions { margin-left: 8px; display: inline-flex; gap: 4px; vertical-align: middle; }
-.ep-form-delete { display: inline; }
-.btn-sm {
-  display: inline-flex; align-items: center; justify-content: center;
-  padding: 2px 8px; font-size: 13px; border: 1px solid var(--border);
-  border-radius: 4px; cursor: pointer; background: var(--card);
-  color: var(--text); line-height: 1.6; transition: background .15s;
-}
-.btn-sm:hover { background: var(--tag-hover-bg); }
-.btn-delete:hover { border-color: #e57373; color: #c62828; }
-.btn-append:hover { border-color: var(--accent-dim); color: var(--accent); }
-
-/* append form */
-.ep-append-wrap {
-  margin: 8px 0 16px; padding: 12px; border: 1px solid var(--border);
-  border-radius: var(--radius); background: var(--blockquote-bg);
-}
-.append-textarea {
-  width: 100%; padding: 8px 10px; border: 1px solid var(--border);
-  border-radius: var(--radius); font-size: 14px; font-family: inherit;
-  resize: vertical; box-sizing: border-box;
-}
-.append-actions { margin-top: 8px; display: flex; gap: 8px; }
-.btn-submit { background: var(--accent); color: #fff; border-color: var(--accent); }
-.btn-submit:hover { background: var(--accent-dim); }
-.btn-cancel { background: var(--card); border-color: var(--border); color: var(--muted); }
 """
 
 INDEX_HTML = """<!DOCTYPE html>
@@ -193,26 +154,12 @@ NOTE_HTML = """<!DOCTYPE html>
 <div class="breadcrumb">
   <a href="/">观感记录</a> / {season_cn}
 </div>
-{flash}
 {meta_html}
 <div class="content">
 {body}
 </div>
 <footer>BangumiBot — 追番管理 &amp; 观感记录</footer>
 </div>
-<script>
-function toggleAppend(ep) {{
-  var el = document.getElementById('append-' + ep);
-  if (el) {{
-    el.style.display = el.style.display === 'none' ? 'block' : 'none';
-  }}
-}}
-// Auto-dismiss flash messages after 5 seconds
-setTimeout(function() {{
-  var flash = document.querySelector('.flash');
-  if (flash) {{ flash.style.opacity = '0'; flash.style.transition = 'opacity 0.5s'; }}
-}}, 5000);
-</script>
 </body>
 </html>"""
 
@@ -250,44 +197,6 @@ def _parse_frontmatter(content: str) -> tuple[dict, str]:
     return {}, content.strip()
 
 
-def _inject_episode_actions(body: str, season: str, anime: str) -> str:
-    """在每个 ## epXX 标题后注入删除/追加操作按钮和追加表单。"""
-    encoded_season = quote(season)
-    encoded_anime = quote(anime)
-
-    def _replacer(m: re.Match) -> str:
-        heading_text = m.group(1)
-        ep_num = int(m.group(2))
-        return (
-            f"{heading_text}"
-            f'<span class="ep-actions">'
-            f'  <form method="post" action="/notes/{encoded_season}/{encoded_anime}/delete" '
-            f'        class="ep-form-delete" '
-            f'        onsubmit="return confirm(\'删除第{ep_num}集的所有观感记录？\')">'
-            f'    <input type="hidden" name="episode" value="{ep_num}">'
-            f'    <button type="submit" class="btn btn-sm btn-delete" title="删除该集">🗑️</button>'
-            f'  </form>'
-            f'  <button class="btn btn-sm btn-append" data-ep="{ep_num}" '
-            f'          onclick="toggleAppend({ep_num})" title="手动追加笔记">✏️</button>'
-            f'</span>'
-            f'\n\n'
-            f'<div class="ep-append-wrap" id="append-{ep_num}" style="display:none">'
-            f'  <form method="post" action="/notes/{encoded_season}/{encoded_anime}/append">'
-            f'    <input type="hidden" name="episode" value="{ep_num}">'
-            f'    <textarea name="text" rows="3" placeholder="手动追加笔记..." '
-            f'              class="append-textarea"></textarea>'
-            f'    <div class="append-actions">'
-            f'      <button type="submit" class="btn btn-sm btn-submit">提交</button>'
-            f'      <button type="button" class="btn btn-sm btn-cancel" '
-            f'              onclick="toggleAppend({ep_num})">取消</button>'
-            f'    </div>'
-            f'  </form>'
-            f'</div>'
-        )
-
-    return re.sub(r'^(## ep(\d+)\s*)', _replacer, body, flags=re.MULTILINE)
-
-
 class WebViewer:
     def __init__(self, notes_dir: str, host: str = "0.0.0.0", port: int = 58080):
         self._notes_dir = Path(notes_dir)
@@ -298,62 +207,9 @@ class WebViewer:
         self._runner: web.AppRunner | None = None
         self._setup_routes()
 
-    async def _handle_delete_episode(self, request: web.Request) -> web.Response:
-        season = request.match_info["season"]
-        anime = request.match_info["anime"]
-        self._validate_note_params(season, anime)
-
-        data = await request.post()
-        episode_str = data.get("episode", "")
-        try:
-            episode = int(episode_str)
-        except (ValueError, TypeError):
-            raise web.HTTPBadRequest(text="无效的集数")
-
-        if episode <= 0:
-            raise web.HTTPBadRequest(text="集数必须为正整数")
-
-        ok = self._storage.delete_episode(anime, season, episode)
-        location = f"/notes/{quote(season)}/{quote(anime)}"
-        if ok:
-            location += "?deleted=1"
-        else:
-            location += "?error=未找到该集的记录"
-        raise web.HTTPFound(location=location)
-
-    async def _handle_append_to_episode(self, request: web.Request) -> web.Response:
-        season = request.match_info["season"]
-        anime = request.match_info["anime"]
-        self._validate_note_params(season, anime)
-
-        data = await request.post()
-        episode_str = data.get("episode", "")
-        text = data.get("text", "").strip()
-
-        if not text:
-            raise web.HTTPBadRequest(text="追加内容不能为空")
-
-        try:
-            episode = int(episode_str)
-        except (ValueError, TypeError):
-            raise web.HTTPBadRequest(text="无效的集数")
-
-        if episode <= 0:
-            raise web.HTTPBadRequest(text="集数必须为正整数")
-
-        ok = self._storage.append_to_episode(anime, season, episode, text)
-        location = f"/notes/{quote(season)}/{quote(anime)}"
-        if ok:
-            location += "?appended=1"
-        else:
-            location += "?error=未找到该集的记录"
-        raise web.HTTPFound(location=location)
-
     def _setup_routes(self):
         self._app.router.add_get("/", self._handle_index)
         self._app.router.add_get("/notes/{season}/{anime}", self._handle_note)
-        self._app.router.add_post("/notes/{season}/{anime}/delete", self._handle_delete_episode)
-        self._app.router.add_post("/notes/{season}/{anime}/append", self._handle_append_to_episode)
 
     async def start(self):
         if self._port <= 0:
@@ -412,6 +268,8 @@ class WebViewer:
     async def _handle_note(self, request: web.Request) -> web.Response:
         season = request.match_info["season"]
         anime = request.match_info["anime"]
+
+        # 安全检查：防止路径遍历
         self._validate_note_params(season, anime)
 
         content = self._storage.load_anime(anime, season)
@@ -419,23 +277,10 @@ class WebViewer:
             raise web.HTTPNotFound()
 
         meta, body = _parse_frontmatter(content)
-
-        # 注入编辑操作按钮和表单
-        body = _inject_episode_actions(body, season, anime)
-
         html_body = markdown.markdown(
             body,
             extensions=["fenced_code", "tables", "codehilite"],
         )
-
-        # flash 消息
-        flash = ""
-        if request.query.get("deleted") == "1":
-            flash = '<div class="flash flash-success">已删除该集记录</div>'
-        elif request.query.get("appended") == "1":
-            flash = '<div class="flash flash-success">已追加笔记</div>'
-        elif error := request.query.get("error"):
-            flash = f'<div class="flash flash-error">{html_mod.escape(error)}</div>'
 
         meta_html = _render_meta(meta)
         year, month = season.split(".")
@@ -448,6 +293,5 @@ class WebViewer:
             season_cn=season_cn,
             meta_html=meta_html,
             body=html_body,
-            flash=flash,
         )
         return web.Response(text=html, content_type="text/html", charset="utf-8")

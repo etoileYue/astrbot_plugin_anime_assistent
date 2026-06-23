@@ -8,6 +8,7 @@ from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 from .core.config import PluginConfig
 from .core.scheduler import UpdateScheduler
 from .core.web_viewer import WebViewer
+from .core.web_editor import WebEditor
 from .handlers.interview import InterviewHandler
 from .handlers.progress import ProgressHandler
 from .handlers.subscription import SubscriptionHandler
@@ -28,6 +29,7 @@ class BangumiPlugin(Star):
         self.interview_handler = InterviewHandler(self, self.db, self.plugin_config)
         self.scheduler = UpdateScheduler(self, interview_handler=self.interview_handler)
         self.web_viewer: WebViewer | None = None
+        self.web_editor: WebEditor | None = None
         self._pending_confirms: dict[str, dict] = {}
         self._cmd_words = {"sync", "search", "sub", "notes", "bangumi"}
 
@@ -41,6 +43,13 @@ class BangumiPlugin(Star):
             port=self.plugin_config.web_viewer_port,
         )
         await self.web_viewer.start()
+
+        # Web 笔记编辑器（独立端口，用于手动编辑 Markdown）
+        self.web_editor = WebEditor(
+            self._get_notes_dir(),
+            port=self.plugin_config.web_editor_port,
+        )
+        await self.web_editor.start()
 
         # 从 Bangumi 同步「在看」列表
         try:
@@ -76,7 +85,8 @@ class BangumiPlugin(Star):
             "  /notes list          查看观感记录",
             "  /bangumi             显示本帮助",
             "",
-            "Web 笔记查看器：浏览器访问 http://<服务器IP>:58080（支持编辑）",
+            "Web 笔记查看器：http://<服务器IP>:58080（只读）",
+            "Web 笔记编辑器：http://<服务器IP>:58081（编辑 Markdown）",
         ]
         yield event.plain_result("\n".join(lines))
 
@@ -337,4 +347,6 @@ class BangumiPlugin(Star):
         await self.scheduler.stop()
         if self.web_viewer:
             await self.web_viewer.stop()
+        if self.web_editor:
+            await self.web_editor.stop()
         await self.db.close()
