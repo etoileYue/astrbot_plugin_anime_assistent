@@ -10,6 +10,8 @@
 - **更新提醒** — 定时检查番剧更新，自动推送 QQ 通知
 - **观感访谈** — 同步进度后 LLM 自动发起多轮访谈对话
 - **Markdown 记录** — 访谈内容自动保存为 Obsidian 兼容的 Markdown 文件
+- **Web 笔记查看** — 浏览器访问只读笔记页面（端口 58080）
+- **Web 笔记编辑** — 独立的文件管理器 + Markdown 编辑器（端口 58081）
 
 ## 安装
 
@@ -28,7 +30,21 @@
 | `/sub remove <id>` | 移除追番 |
 | `/sub sync` | 从 Bangumi 同步「在看」列表 |
 | `/sync` | 手动触发更新检查 |
+| `/note <标识> <集数>` | 手动触发观感访谈 |
 | `/notes list` | 查看观感记录 |
+
+## Web 界面
+
+插件启动后提供两个 Web 端口：
+
+| 端口 | 用途 | 说明 |
+|------|------|------|
+| `58080` | **笔记查看器** | 只读浏览，可分享给他人 |
+| `58081` | **笔记编辑器** | 文件管理 + Markdown 全文编辑 |
+
+查看器展示渲染后的 HTML 页面；编辑器提供侧边栏文件树，支持新建/删除/编辑 Markdown 文件，Ctrl+S 保存。
+
+端口号可在插件配置中修改（`web_viewer_port` / `web_editor_port`），设为 0 可禁用。
 
 ## 消息模式
 
@@ -36,6 +52,26 @@
 
 - `芙莉莲15看完`
 - `葬送的芙莉莲看到第10集`
+
+## 本地开发
+
+无需部署到 AstrBot 即可在本地预览 Web 界面：
+
+```bash
+# 安装 Web 依赖
+pip install aiohttp pyyaml markdown
+
+# 启动开发服务器（自动创建示例数据）
+python tools/dev_server.py
+
+# 自动重载模式（修改代码后自动重启）
+pip install watchfiles
+python tools/dev_server.py --reload
+```
+
+启动后访问：
+- `http://localhost:58080` — 查看器预览
+- `http://localhost:58081` — 编辑器预览
 
 ## 文档
 
@@ -52,5 +88,6 @@
 ## 依赖
 
 - Python 3.12+
-- httpx, aiosqlite
+- httpx, aiosqlite, aiohttp
+- markdown, PyYAML
 - AstrBot >= 4.16
