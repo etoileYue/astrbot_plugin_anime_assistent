@@ -45,12 +45,17 @@ class UpdateScheduler:
 
     async def run(self):
         self._running = True
+        interval_hours = self._plugin.plugin_config.check_interval_hours
+        logger.info(f"番剧更新调度器已启动，检查间隔: {interval_hours} 小时")
         while self._running:
             try:
                 await self._do_check()
             except Exception as e:
                 logger.error(f"更新检查失败: {e}")
-            await asyncio.sleep(self._plugin.plugin_config.check_interval_hours * 3600)
+            logger.info(
+                f"下次番剧更新检查将在 {interval_hours} 小时后进行"
+            )
+            await asyncio.sleep(interval_hours * 3600)
 
     async def check_once(self):
         await self._do_check()
@@ -61,16 +66,25 @@ class UpdateScheduler:
 
         db = self._plugin.db
 
+        logger.info("=" * 40)
+        logger.info("番剧更新检查开始")
+
         # Step A: 从 Bangumi 同步「在看」收藏，以 Bangumi 数据覆盖本地
         try:
             total, added, updated, removed, progress_diffs = await sync_from_bangumi(
                 db, self._plugin.plugin_config
+            )
+            logger.info(
+                f"[Step A] Bangumi 同步完成: 总计 {total} 条, "
+                f"新增 {added}, 更新 {updated}, 移除 {removed}, "
+                f"进度变化 {len(progress_diffs)} 条"
             )
         except Exception as e:
             logger.error(f"Bangumi 同步失败: {e}")
             total, added, updated, removed, progress_diffs = 0, 0, 0, 0, []
 
         # Step B: 对进度领先的条目自动触发访谈
+        interview_count = 0
         umo = await self._get_umo()
         if progress_diffs and umo and self._interview_handler:
             for diff in progress_diffs:
@@ -85,6 +99,7 @@ class UpdateScheduler:
                         subject_name_cn=diff.get("subject_name_cn", ""),
                     )
                     if question:
+                        interview_count += 1
                         name = diff.get("subject_name_cn") or diff["subject_name"]
                         msg = (
                             f"检测到你在 Bangumi 上《{name}》的观看进度已更新"
@@ -107,6 +122,8 @@ class UpdateScheduler:
             logger.warning(
                 f"检测到 {len(progress_diffs)} 条进度变化，但 UMO 未设置，跳过访谈触发"
             )
+
+        logger.info(f"[Step B] 自动访谈: 触发了 {interview_count} 个会话")
 
         # Step C: 检查新剧集发布，比对 last_notified_ep 发送通知
         subs = await db.get_active_subscriptions()
@@ -145,12 +162,22 @@ class UpdateScheduler:
             finally:
                 await client.close()
 
+        logger.info(
+            f"[Step C] 剧集检查: 扫描了 {len(subs)} 个订阅, "
+            f"发现 {len(updated_subs)} 个更新"
+        )
+
         if updated_subs and umo:
             await self._send_notifications(umo, updated_subs)
 
         # 更新检查时间
         now = datetime.now(timezone.utc).isoformat()
         await db.set_task_state("last_check_time", now)
+
+        logger.info(
+            f"番剧更新检查完成 (时间: {now})"
+        )
+        logger.info("=" * 40)
 
     async def _send_notifications(self, umo: str, updated: list):
         lines = ["【番剧更新提醒】"]
