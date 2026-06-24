@@ -51,7 +51,9 @@ async def sync_from_bangumi(db: Database, config) -> tuple[int, int, int, int, l
                     else:
                         airing = 1
                 except Exception:
-                    logger.warning(f"获取 {item.subject_id} 剧集失败，默认标记为连载中")
+                    logger.warning(
+                        f"获取 {item.subject_id} 剧集失败，默认标记为连载中"
+                    )
                     airing = 1
             else:
                 airing = 1
@@ -116,7 +118,10 @@ async def sync_from_bangumi(db: Database, config) -> tuple[int, int, int, int, l
                             f"进度 {old_eps} → {episode}，触发访谈"
                         )
             except Exception as e:
-                logger.warning(f"检查已移除条目 {sid} 的收藏状态失败: {e}")
+                logger.warning(
+                    f"检查已移除条目 {sid} 的收藏状态失败: "
+                    f"{e.__class__.__name__}: {e}"
+                )
 
             await db.conn.execute("DELETE FROM subscriptions WHERE subject_id = ?", (sid,))
             await db.conn.execute("DELETE FROM aliases WHERE subject_id = ?", (sid,))

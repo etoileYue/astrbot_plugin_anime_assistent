@@ -103,24 +103,56 @@ class BangumiClient:
 
     async def _request(self, method: str, path: str, **kwargs) -> dict:
         client = await self._get_client()
+        # 用 httpx 内部 URL 拼接，避免手动拼接产生 api//v0 双斜杠
+        req = client.build_request(method, path, **kwargs)
+        url = str(req.url)
         for attempt in range(MAX_RETRIES):
             try:
-                resp = await client.request(method, path, **kwargs)
+                resp = await client.send(req)
                 resp.raise_for_status()
                 return resp.json() if resp.content else {}
             except httpx.HTTPStatusError as e:
                 if e.response.status_code >= 500 and attempt < MAX_RETRIES - 1:
                     wait = 2**attempt
-                    logger.warning(f"Bangumi API 500, retry {attempt+1}/{MAX_RETRIES} in {wait}s")
+                    logger.warning(
+                        f"Bangumi API {e.response.status_code} for {method} {url}, "
+                        f"retry {attempt+1}/{MAX_RETRIES} in {wait}s"
+                    )
                     await asyncio.sleep(wait)
                     continue
+                # 4xx / final retry: log response body for diagnostics
+                resp_body = ""
+                try:
+                    resp_body = e.response.text[:500]
+                except Exception:
+                    pass
+                logger.error(
+                    f"Bangumi API HTTP {e.response.status_code} for {method} {url}: "
+                    f"{resp_body}"
+                )
                 raise
             except httpx.RequestError as e:
+                err_type = type(e).__name__
+                # httpx RequestError 常吞掉底层错误（消息为空、或 repr 只有类名），
+                # 优先取 __cause__ 链中的 OS 级异常，其次用 request 自带 URL
+                cause = e.__cause__
+                if cause is not None:
+                    err_msg = f"{type(cause).__name__}: {cause}"
+                else:
+                    err_msg = str(e) or repr(e)
                 if attempt < MAX_RETRIES - 1:
                     wait = 2**attempt
-                    logger.warning(f"Request error: {e}, retry {attempt+1}/{MAX_RETRIES} in {wait}s")
+                    logger.warning(
+                        f"Bangumi API {err_type}: {err_msg} "
+                        f"for {method} {url}, "
+                        f"retry {attempt+1}/{MAX_RETRIES} in {wait}s"
+                    )
                     await asyncio.sleep(wait)
                     continue
+                logger.error(
+                    f"Bangumi API {err_type} exhausted retries "
+                    f"for {method} {url}: {err_msg}"
+                )
                 raise
 
     async def search_subject(self, keyword: str) -> list[Subject]:

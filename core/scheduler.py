@@ -86,7 +86,9 @@ class UpdateScheduler:
                 f"进度变化 {len(progress_diffs)} 条"
             )
         except Exception as e:
-            logger.error(f"Bangumi 同步失败: {e}")
+            logger.error(
+                f"Bangumi 同步失败: {e.__class__.__name__}: {e}"
+            )
             total, added, updated, removed, progress_diffs = 0, 0, 0, 0, []
 
         # Step B: 对进度领先的条目自动触发访谈
@@ -147,7 +149,10 @@ class UpdateScheduler:
                     try:
                         episodes = await client.get_episodes(sub.subject_id)
                     except Exception as e:
-                        logger.error(f"获取 {sub.subject_name} 集数失败: {e}")
+                        logger.error(
+                            f"获取 {sub.subject_name} (id={sub.subject_id}) 集数失败: "
+                            f"{e.__class__.__name__}: {e}"
+                        )
                         continue
 
                     if not episodes:
