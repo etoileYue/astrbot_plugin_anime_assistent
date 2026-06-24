@@ -1,4 +1,3 @@
-import asyncio
 from pathlib import Path
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
@@ -59,7 +58,7 @@ class BangumiPlugin(Star):
         except Exception as e:
             logger.warning(f"Bangumi 同步失败（不影响插件启动）：{e}")
 
-        asyncio.create_task(self.scheduler.run())
+        self.scheduler.start()
 
     def _get_notes_dir(self) -> str:
         return str(Path(self._data_path) / "anime_notes")
@@ -344,9 +343,23 @@ class BangumiPlugin(Star):
                     yield event.plain_result(msg)
 
     async def terminate(self):
-        await self.scheduler.stop()
+        # 每步清理独立 try/except：确保一处失败不阻断后续清理，
+        # 尤其要保证 web server 的 socket 一定被释放，避免热重载时端口占用。
+        try:
+            await self.scheduler.stop()
+        except Exception as e:
+            logger.warning(f"停止调度器失败: {e}")
         if self.web_viewer:
-            await self.web_viewer.stop()
+            try:
+                await self.web_viewer.stop()
+            except Exception as e:
+                logger.warning(f"停止 web_viewer 失败: {e}")
         if self.web_editor:
-            await self.web_editor.stop()
-        await self.db.close()
+            try:
+                await self.web_editor.stop()
+            except Exception as e:
+                logger.warning(f"停止 web_editor 失败: {e}")
+        try:
+            await self.db.close()
+        except Exception as e:
+            logger.warning(f"关闭数据库失败: {e}")

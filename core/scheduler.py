@@ -43,6 +43,12 @@ class UpdateScheduler:
             logger.info("从数据库恢复了 UMO")
         return self._umo
 
+    def start(self):
+        """启动调度器后台任务，并保存引用以便 terminate 时清理。"""
+        if self._task is not None and not self._task.done():
+            return
+        self._task = asyncio.create_task(self.run())
+
     async def run(self):
         self._running = True
         interval_hours = self._plugin.plugin_config.check_interval_hours
@@ -195,5 +201,12 @@ class UpdateScheduler:
 
     async def stop(self):
         self._running = False
-        if self._task:
+        if self._task is not None and not self._task.done():
             self._task.cancel()
+            try:
+                await self._task
+            except asyncio.CancelledError:
+                pass
+            except Exception as e:
+                logger.warning(f"调度器后台任务退出时抛出异常: {e}")
+        self._task = None
