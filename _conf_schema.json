@@ -4,10 +4,11 @@
     "type": "string",
     "hint": "在 https://next.bgm.tv/demo/access-token 获取个人访问令牌"
   },
-  "use_cn_mirror": {
-    "description": "使用国内镜像（api.bangumi.one）",
-    "type": "bool",
-    "default": false
+  "bangumi_mirror_url": {
+    "description": "Bangumi 国内镜像站点",
+    "type": "string",
+    "default": "",
+    "hint": "可选。留空使用官方站点；如需走国内镜像，填写镜像站点地址（例：https://api.bangumi.one）"
   },
   "check_interval_hours": {
     "description": "番剧更新检查间隔（小时）",

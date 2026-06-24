@@ -12,8 +12,9 @@ class PluginConfig:
         return self._config.get("bangumi_access_token", "")
 
     @property
-    def use_cn_mirror(self) -> bool:
-        return self._config.get("use_cn_mirror", False)
+    def bangumi_mirror_url(self) -> str:
+        """用户自定义的 Bangumi 镜像站点地址，留空表示使用官方站点。"""
+        return str(self._config.get("bangumi_mirror_url", "") or "").strip()
 
     @property
     def check_interval_hours(self) -> float:
