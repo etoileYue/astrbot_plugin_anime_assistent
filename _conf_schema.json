@@ -30,5 +30,11 @@
     "description": "Web 笔记编辑器端口（0 禁用）",
     "type": "int",
     "default": 58081
+  },
+  "bangumi_proxy": {
+    "description": "HTTP 代理地址",
+    "type": "string",
+    "default": "http://mihomo:7890",
+    "hint": "留空则不使用代理。例：http://127.0.0.1:7890 或 http://mihomo:7890"
   }
 }

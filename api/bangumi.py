@@ -69,10 +69,15 @@ class BangumiClient:
             if token:
                 headers["Authorization"] = f"Bearer {token}"
             base_url = self._config.bangumi_mirror_url or BASE_URL
+            proxies = None
+            proxy_url = self._config.bangumi_proxy
+            if proxy_url:
+                proxies = {"http://": proxy_url, "https://": proxy_url}
             self._client = httpx.AsyncClient(
                 base_url=base_url,
                 headers=headers,
                 timeout=30.0,
+                proxies=proxies,
             )
         return self._client
 
