@@ -31,12 +31,14 @@ class BangumiScraper:
 
     def __init__(self, cache_ttl: int = DEFAULT_CACHE_TTL,
                  comment_limit: int = DEFAULT_COMMENT_LIMIT,
-                 use_cn_mirror: bool = False):
+                 use_cn_mirror: bool = False,
+                 proxy: str | None = None):
         self._client: httpx.AsyncClient | None = None
         self._cache: dict[int, tuple[float, list[Comment]]] = {}
         self._cache_ttl = cache_ttl
         self._comment_limit = comment_limit
         self._use_cn_mirror = use_cn_mirror
+        self._proxy = proxy
         self._last_request = 0.0
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -46,6 +48,7 @@ class BangumiScraper:
                 base_url=base_url,
                 headers={"User-Agent": "etoile_yue/BangumiBot"},
                 timeout=30.0,
+                proxy=self._proxy,
             )
         return self._client
 

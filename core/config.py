@@ -39,5 +39,10 @@ class PluginConfig:
         """Web 笔记编辑器端口，0 禁用。"""
         return self._config.get("web_editor_port", 58081)
 
+    @property
+    def bangumi_proxy(self) -> str:
+        """HTTP 代理地址，留空表示不使用代理。"""
+        return str(self._config.get("bangumi_proxy", "http://mihomo:7890") or "").strip()
+
     def save(self):
         self._config.save_config()

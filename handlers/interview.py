@@ -57,6 +57,7 @@ class InterviewHandler:
                 self._scraper = BangumiScraper(
                     comment_limit=self._config.scraper_comment_limit,
                     use_cn_mirror=self._config.use_cn_mirror,
+                    proxy=self._config.bangumi_proxy or None,
                 )
             except ImportError:
                 logger.warning("beautifulsoup4 未安装，评论爬取不可用")
