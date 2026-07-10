@@ -46,7 +46,8 @@ CREATE TABLE IF NOT EXISTS interviews (
     question    TEXT NOT NULL,
     answer      TEXT,
     round       INTEGER DEFAULT 1,
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    episode_start INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS task_state (
@@ -80,6 +81,15 @@ class Database:
             )
         except Exception:
             pass
+        try:
+            await self._db.execute(
+                "ALTER TABLE interviews ADD COLUMN episode_start INTEGER"
+            )
+        except Exception:
+            pass
+        await self._db.execute(
+            "UPDATE interviews SET episode_start = episode WHERE episode_start IS NULL"
+        )
         await self._db.commit()
         logger.info(f"Database initialized at {self._path}")
 
@@ -225,14 +235,19 @@ class Database:
     # === interviews ===
 
     async def save_interview(self, subject_id: int, episode: int,
-                             question: str, answer: str = "", round_num: int = 1) -> Interview:
+                             question: str, answer: str = "", round_num: int = 1,
+                             episode_start: int | None = None) -> Interview:
+        episode_start = episode if episode_start is None else episode_start
         cursor = await self.conn.execute(
-            "INSERT INTO interviews (subject_id, episode, question, answer, round) VALUES (?, ?, ?, ?, ?)",
-            (subject_id, episode, question, answer, round_num),
+            """INSERT INTO interviews
+               (subject_id, episode, episode_start, question, answer, round)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (subject_id, episode, episode_start, question, answer, round_num),
         )
         await self.conn.commit()
         return Interview(id=cursor.lastrowid, subject_id=subject_id,
-                         episode=episode, question=question, answer=answer, round=round_num)
+                         episode=episode, episode_start=episode_start,
+                         question=question, answer=answer, round=round_num)
 
     async def get_interviews(self, subject_id: int, episode: int) -> list[Interview]:
         rows = await self.conn.execute_fetchall(
@@ -240,7 +255,8 @@ class Database:
             (subject_id, episode),
         )
         return [Interview(id=r[0], subject_id=r[1], episode=r[2],
-                          question=r[3], answer=r[4], round=r[5], created_at=r[6]) for r in rows]
+                          question=r[3], answer=r[4], round=r[5], created_at=r[6],
+                          episode_start=r[7] or r[2]) for r in rows]
 
     # === task_state ===
 

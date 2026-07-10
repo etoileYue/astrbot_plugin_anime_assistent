@@ -95,14 +95,16 @@ Scheduler (每N小时触发)
 同步进度完成
   │
   ├─ 1. 访谈引擎初始化：
-  │     ├─ 创建访谈会话（subject_id + episode + user_id）
+  │     ├─ 云端领先多集时，创建覆盖 local+1 至云端进度的范围会话
+  │     ├─ 云端条目标记为“看过”但 ep_status 缺失时，以已知总集数作为终点
+  │     ├─ 创建访谈会话（subject_id + start_episode + end_episode）
   │     └─ 状态 = "等待发起"
   │
-  ├─ 2. 获取该集评论上下文：
+  ├─ 2. 后台获取范围内各集评论：
   │     ├─ 通过 Bangumi API GET /v0/episodes?subject_id={subject_id}
-  │     │   获取章节列表，找到 ep={episode} 对应的 episode_id
-  │     ├─ 查 scraper 缓存（key=episode_id, TTL=86400s）
-  │     ├─ 缓存未命中 → 爬取 https://bgm.tv/ep/{episode_id}
+  │     │   获取章节列表，找到范围内各 ep 对应的 episode_id
+  │     ├─ 逐集查 scraper 缓存（key=episode_id, TTL=86400s）
+  │     ├─ 缓存未命中 → 逐集爬取 https://bgm.tv/ep/{episode_id}
   │     │   （使用 scraper/bangumi.py，>= 0.5s rate limit）
   │     ├─ 解析 HTML（div#comment_list → BeautifulSoup → [Comment])
   │     ├─ 写入缓存
@@ -110,9 +112,9 @@ Scheduler (每N小时触发)
   │
   ├─ 3. 生成初始问题：
   │     ├─ 调 LLM，prompt 包含：
-  │     │   - 番剧名称和集数
-  │     │   - Bangumi 真实用户评论（如获取成功）
-  │     │   - 指令：基于真实评论中的讨论点生成开放式问题
+  │     │   - 番剧名称和集数范围
+  │     │   - 指令：请用户先自行总结整体观感
+  │     │   - 不包含 Bangumi 评论
   │     └─ 得到问题文本
   │
   ├─ 4. 发送问题到 QQ
@@ -121,7 +123,7 @@ Scheduler (每N小时触发)
   │     ├─ interview handler 接收消息
   │     ├─ 识别为访谈回复（通过会话状态判断）
   │     ├─ 存入 interviews 表
-  │     └─ 调 LLM 分析回答，生成追问
+  │     └─ 等待评论预抓取完成，将用户总结和分集评论用于生成追问
   │
   ├─ 6. 追问循环（2-3轮）：
   │     ├─ 每轮：LLM 生成追问 → 用户回答 → 存入 DB
@@ -139,13 +141,13 @@ Scheduler (每N小时触发)
   ├─ 1. 从 interviews 表读取本次访谈的所有问答
   │
   ├─ 2. 构造 Markdown 内容：
-  │     ├─ YAML frontmatter（anime, episode, title, watched_at, subject_id）
+  │     ├─ YAML frontmatter（anime, title, watched_at, subject_id）
   │     ├─ 标题
   │     └─ Q&A 对话
   │
   ├─ 3. 目录和文件命名：
   │     ├─ 目录：anime_notes/{subject_name}/
-  │     └─ 文件：ep{episode:02d}.md
+  │     └─ 合并访谈章节：ep{start_episode:02d}-{end_episode:02d}
   │
   └─ 4. 写入文件
 ```

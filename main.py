@@ -246,7 +246,7 @@ class BangumiPlugin(Star):
             f"（随时可以说\"不聊了\"结束访谈）"
         )
         hint = self.interview_handler.get_routing_hint(
-            exclude=(result.subject_id, episode)
+            exclude=(result.subject_id, episode, episode)
         )
         if hint:
             msg += "\n" + hint
@@ -336,7 +336,7 @@ class BangumiPlugin(Star):
                 if question:
                     msg = f'想聊聊这一集吗？\n\n{question}\n\n（随时可以说"不聊了"结束访谈）'
                     hint = self.interview_handler.get_routing_hint(
-                        exclude=(sync_result.subject_id, sync_result.episode)
+                        exclude=(sync_result.subject_id, sync_result.episode, sync_result.episode)
                     )
                     if hint:
                         msg += "\n" + hint

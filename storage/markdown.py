@@ -47,14 +47,21 @@ class MarkdownStorage:
         qa_pairs: list[tuple[str, str]],
         subject_id: int = 0,
         total_episodes: int = 0,
+        episode_start: int | None = None,
     ) -> str:
-        """保存单集观感到对应番剧文件，返回文件路径。"""
+        """保存单集或连续多集观感到对应番剧文件，返回文件路径。"""
         season_dir = self._base_dir / season
         season_dir.mkdir(parents=True, exist_ok=True)
         filename = self._sanitize_filename(anime_name) + ".md"
         filepath = season_dir / filename
 
-        episode_section = f"\n## ep{episode:02d}\n\n"
+        episode_start = episode if episode_start is None else episode_start
+        episode_label = (
+            f"ep{episode:02d}"
+            if episode_start == episode
+            else f"ep{episode_start:02d}-{episode:02d}"
+        )
+        episode_section = f"\n## {episode_label}\n\n"
         for i, (q, a) in enumerate(qa_pairs, 1):
             episode_section += f"> **Q{i}:** {q}\n>\n"
             if a:
@@ -64,7 +71,7 @@ class MarkdownStorage:
 
         if filepath.exists():
             content = filepath.read_text(encoding="utf-8")
-            if f"## ep{episode:02d}" in content:
+            if f"## {episode_label}" in content:
                 # 同集追加，用分隔线
                 content = content.rstrip()
                 content += f"\n---\n{episode_section}"

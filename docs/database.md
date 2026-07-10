@@ -58,7 +58,7 @@ CREATE TABLE aliases (
 CREATE TABLE watch_log (
     id          INTEGER PRIMARY KEY,
     subject_id  INTEGER NOT NULL,
-    episode     INTEGER NOT NULL,
+    episode     INTEGER NOT NULL,              -- 访谈范围终点
     watched_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     source      TEXT DEFAULT 'manual'          -- 'manual' = QQ消息同步, 'bangumi_sync' = 从Bangumi同步
 );
@@ -76,11 +76,13 @@ CREATE TABLE interviews (
     question    TEXT NOT NULL,                 -- AI提出的问题
     answer      TEXT,                          -- 用户回答（可能为空，等待回答中）
     round       INTEGER DEFAULT 1,            -- 第几轮对话
-    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    episode_start INTEGER                     -- 访谈范围起点；单集时等于 episode
 );
 ```
 
-**说明**：每条记录是一轮问答。一次访谈可能有多轮。Markdown 文件的生成以本表数据为源。
+**说明**：每条记录是一轮问答。一次访谈可能有多轮；连续多集的合并访谈以
+`episode_start` 至 `episode` 标识覆盖范围。历史单集记录会迁移为起止相同。
 
 ### task_state — 定时任务状态
 
@@ -119,6 +121,7 @@ CREATE TABLE task_state (
          └──────────▶│ id (PK)      │
                      │ subject_id   │
                      │ episode      │
+                     │ episode_start│
                      │ question     │
                      │ answer       │
                      │ round        │

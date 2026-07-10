@@ -39,6 +39,7 @@ class Interview:
     id: int = 0
     subject_id: int = 0
     episode: int = 0
+    episode_start: int = 0
     question: str = ""
     answer: Optional[str] = None
     round: int = 1

@@ -1,5 +1,6 @@
 """访谈引擎 — 管理多轮访谈对话的状态机。"""
 
+import asyncio
 import logging
 from enum import Enum, auto
 
@@ -17,9 +18,9 @@ class InterviewState(Enum):
 INTERVIEW_SYSTEM_PROMPT = """你是一个友好的追番伙伴，正在和用户聊刚看完的动画。
 
 你的任务是：
-1. 根据番剧信息提出开放式问题，引导用户分享观感
-2. 问题应具体、有深度，不要问"你觉得怎么样"这种笼统问题
-3. 基于用户回答生成自然追问，像朋友聊天一样
+1. 首先引导用户用自己的话总结观感，不预设或转述其他观众的观点
+2. 在用户完成初步总结后，再结合用户回答和其他观众讨论生成自然追问
+3. 问题应具体、有深度，不要问"你觉得怎么样"这种笼统问题
 4. 不要重复之前问过的问题
 5. 如果用户表示不想继续聊（如"不聊了""先这样""结束"），回复一句简短的收尾
 
@@ -27,27 +28,38 @@ INTERVIEW_SYSTEM_PROMPT = """你是一个友好的追番伙伴，正在和用户
 
 
 class InterviewEngine:
-    """单次访谈的状态机。每个 (subject_id, episode) 创建一个实例。"""
+    """单次访谈的状态机。每个连续剧集范围创建一个实例。"""
 
     def __init__(self, plugin, db, config, subject_id: int, episode: int,
-                 subject_name: str, subject_name_cn: str = "", scraper=None):
+                 subject_name: str, subject_name_cn: str = "", scraper=None,
+                 start_episode: int | None = None):
         self._plugin = plugin
         self._db = db
         self._config = config
         self._scraper = scraper
         self.subject_id = subject_id
         self.episode = episode
+        self.start_episode = start_episode or episode
         self.subject_name = subject_name_cn or subject_name
         self.state = InterviewState.IDLE
         self.round = 0
         self.max_rounds = config.max_interview_rounds
         self._history: list[tuple[str, str]] = []  # [(question, answer), ...]
-        self._comments_context: str = ""  # 缓存格式化后的评论，避免重复抓取
+        self._comments_context: str = ""
+        self._comments_task: asyncio.Task[str] | None = None
+
+    @property
+    def episode_label(self) -> str:
+        if self.start_episode == self.episode:
+            return f"第{self.episode}集"
+        return f"第{self.start_episode}-{self.episode}集"
 
     async def start(self, umo: str) -> str | None:
         """生成初始问题并开始访谈。返回问题文本。"""
         self.state = InterviewState.GENERATING
         try:
+            # 评论只在用户完成自主总结后用于追问，但可并行预抓取以减少等待。
+            self._start_comments_prefetch()
             question = await self._generate_initial_question(umo)
             if not question:
                 self.state = InterviewState.ENDED
@@ -59,6 +71,7 @@ class InterviewEngine:
             await self._db.save_interview(
                 subject_id=self.subject_id,
                 episode=self.episode,
+                episode_start=self.start_episode,
                 question=question,
                 round_num=self.round,
             )
@@ -86,6 +99,7 @@ class InterviewEngine:
         await self._db.save_interview(
             subject_id=self.subject_id,
             episode=self.episode,
+            episode_start=self.start_episode,
             question=self._history[-1][0] if self._history else "",
             answer=answer,
             round_num=self.round,
@@ -107,6 +121,7 @@ class InterviewEngine:
             await self._db.save_interview(
                 subject_id=self.subject_id,
                 episode=self.episode,
+                episode_start=self.start_episode,
                 question=follow_up,
                 round_num=self.round,
             )
@@ -116,12 +131,29 @@ class InterviewEngine:
             self.state = InterviewState.ENDED
             return "聊得很开心！观感记录已保存。"
 
+    def _start_comments_prefetch(self):
+        """后台预抓取评论；首问不等待也不使用该结果。"""
+        if self._scraper is not None and self._comments_task is None:
+            self._comments_task = asyncio.create_task(self._fetch_comments_context())
+
     async def _get_comments_context(self) -> str:
-        """获取剧集评论上下文，失败时返回空字符串。结果会缓存在实例中。"""
+        """等待范围评论预抓取完成，失败时返回空字符串。"""
         if self._scraper is None:
             return ""
         if self._comments_context:
             return self._comments_context
+        self._start_comments_prefetch()
+        if self._comments_task is None:
+            return ""
+        try:
+            self._comments_context = await self._comments_task
+            return self._comments_context
+        except Exception:
+            logger.warning("获取评论上下文失败", exc_info=True)
+            return ""
+
+    async def _fetch_comments_context(self) -> str:
+        """按集顺序抓取连续范围的评论，并保留剧集来源。"""
         try:
             from ..api.bangumi import BangumiClient
 
@@ -131,38 +163,33 @@ class InterviewEngine:
             finally:
                 await client.close()
 
-            episode_id = None
-            for ep in episodes:
-                if ep.ep == self.episode:
-                    episode_id = ep.id
-                    break
-            if episode_id is None:
-                return ""
-
-            comments = await self._scraper.get_episode_comments(episode_id)
-            if not comments:
-                return ""
-
             lines = []
-            for c in comments:
-                lines.append(f"- {c.username}: {c.text}")
-            self._comments_context = "\n".join(lines)
-            return self._comments_context
+            episode_map = {
+                ep.ep: ep.id
+                for ep in episodes
+                if self.start_episode <= ep.ep <= self.episode
+            }
+            for episode in range(self.start_episode, self.episode + 1):
+                episode_id = episode_map.get(episode)
+                if episode_id is None:
+                    logger.warning("未找到第%s集的 Bangumi 章节 ID", episode)
+                    continue
+                comments = await self._scraper.get_episode_comments(episode_id)
+                if not comments:
+                    continue
+                lines.append(f"第{episode}集：")
+                lines.extend(f"- {c.username}: {c.text}" for c in comments)
+            return "\n".join(lines)
         except Exception:
             logger.warning("获取评论上下文失败", exc_info=True)
             return ""
 
     async def _generate_initial_question(self, umo: str) -> str:
-        await self._get_comments_context()  # 触发抓取并缓存到 self._comments_context
-        prompt = f"用户刚看完《{self.subject_name}》第{self.episode}集。\n"
-        if self._comments_context:
-            prompt += (
-                f"\n以下是其他观众对这一集的讨论：\n{self._comments_context}\n\n"
-                f"请基于以上讨论点，提出一个开放式问题，引导用户分享对这一集的观感和想法。"
-            )
-        else:
-            prompt += "请提出一个开放式问题，引导用户分享对这一集的观感和想法。"
-        return await self._llm_chat(prompt, umo)
+        """返回固定开场白，避免 LLM 臆测最新剧情内容。"""
+        return (
+            f"《{self.subject_name}》{self.episode_label}看完了。"
+            "先用自己的话总结一下整体观感，再分享最让你在意或印象深刻的部分吧。"
+        )
 
     async def _generate_follow_up(self, answer: str, umo: str) -> str:
         context = []
@@ -170,13 +197,13 @@ class InterviewEngine:
             context.append({"role": "assistant", "content": q})
             if a:
                 context.append({"role": "user", "content": a})
-        context.append({"role": "user", "content": answer})
-
-        if self._comments_context:
+        comments_context = await self._get_comments_context()
+        if comments_context:
             prompt = (
-                f"以下是一些观众对《{self.subject_name}》第{self.episode}集的讨论，"
-                f"可作为追问话题参考：\n{self._comments_context}\n\n"
-                f"基于上面的对话和以上参考讨论，提出一个自然的追问，深入探讨用户的观感。"
+                f"以下是一些观众对《{self.subject_name}》{self.episode_label}的分集讨论，"
+                f"可作为追问话题参考：\n{comments_context}\n\n"
+                "基于上面的对话中用户的自主总结以及以上参考讨论，提出一个自然的追问。"
+                "应从用户已经表达的观点出发，不要把评论观点当作用户立场。"
             )
         else:
             prompt = "基于上面的对话，提出一个自然的追问，深入探讨用户的观感。"
@@ -184,17 +211,10 @@ class InterviewEngine:
         return await self._llm_chat(prompt, umo, context)
 
     async def _generate_closing(self, umo: str) -> str:
-        if self._comments_context:
-            prompt = (
-                f"用户刚聊完《{self.subject_name}》第{self.episode}集的观感。"
-                f"以下是一些观众对这一集的讨论：\n{self._comments_context}\n\n"
-                f"请说一句简短的收尾，可以呼应以上讨论中的观点，感谢用户的分享。"
-            )
-        else:
-            prompt = (
-                f"用户刚聊完《{self.subject_name}》第{self.episode}集的观感。"
-                f"请说一句简短的收尾，感谢用户的分享。"
-            )
+        prompt = (
+            f"用户刚聊完《{self.subject_name}》{self.episode_label}的观感。"
+            "请说一句简短的收尾，感谢用户分享自己的看法。"
+        )
         return await self._llm_chat(prompt, umo)
 
     async def _llm_chat(self, prompt: str, umo: str, context: list[dict] | None = None) -> str:

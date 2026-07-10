@@ -17,6 +17,11 @@ class PluginConfig:
         return str(self._config.get("bangumi_mirror_url", "") or "").strip()
 
     @property
+    def use_cn_mirror(self) -> bool:
+        """评论爬虫是否使用与已配置 API 镜像对应的国内镜像站。"""
+        return self.bangumi_mirror_url.rstrip("/") == "https://api.bangumi.one"
+
+    @property
     def check_interval_hours(self) -> float:
         return self._config.get("check_interval_hours", 2.0)
 

@@ -10,13 +10,17 @@ from ..storage.markdown import MarkdownStorage
 
 logger = logging.getLogger(__name__)
 
-ROUTING_RE = re.compile(r'^\[(.+?)\]\s*(\d{1,4})\s*[：:]\s*(.+)', re.DOTALL)
+ROUTING_RE = re.compile(
+    r'^\[(.+?)\]\s*(\d{1,4})(?:\s*(?:-|~|至)\s*(\d{1,4}))?\s*[：:]\s*(.+)',
+    re.DOTALL,
+)
 
 
 @dataclass
 class RoutingInfo:
     identifier: str
-    episode: int
+    start_episode: int
+    end_episode: int
     answer: str
 
 
@@ -38,7 +42,8 @@ class InterviewHandler:
         self._active_sessions: dict[tuple, InterviewEngine] = {}
 
     async def try_start(self, event, subject_id: int, episode: int,
-                        subject_name: str, subject_name_cn: str = "") -> str | None:
+                        subject_name: str, subject_name_cn: str = "",
+                        start_episode: int | None = None) -> str | None:
         """进度同步后尝试发起访谈。返回初始问题或 None。"""
         return await self.try_start_auto(
             umo=event.unified_msg_origin,
@@ -46,10 +51,12 @@ class InterviewHandler:
             episode=episode,
             subject_name=subject_name,
             subject_name_cn=subject_name_cn,
+            start_episode=start_episode,
         )
 
     async def try_start_auto(self, umo: str, subject_id: int, episode: int,
-                             subject_name: str, subject_name_cn: str = "") -> str | None:
+                             subject_name: str, subject_name_cn: str = "",
+                             start_episode: int | None = None) -> str | None:
         """自动触发访谈（无需 event 对象）。返回初始问题或 None。"""
         if self._scraper is None:
             try:
@@ -67,12 +74,13 @@ class InterviewHandler:
             subject_id=subject_id, episode=episode,
             subject_name=subject_name, subject_name_cn=subject_name_cn,
             scraper=self._scraper,
+            start_episode=start_episode,
         )
         question = await engine.start(umo)
         if question is None:
             return None
 
-        self._active_sessions[(subject_id, episode)] = engine
+        self._active_sessions[(subject_id, engine.start_episode, episode)] = engine
         return question
 
     async def start_manual(self, umo: str, identifier: str, episode: int) -> ManualStartResult:
@@ -131,7 +139,7 @@ class InterviewHandler:
         """检查消息是否属于活跃访谈，如果是则处理回复。
 
         单会话：直接路由。
-        多会话：解析 [番剧标识] 集数：回复 格式的路由前缀。
+        多会话：解析 [番剧标识] 集数或范围：回复 格式的路由前缀。
         """
         text = event.message_str.strip()
         sessions = list(self._active_sessions.items())
@@ -147,39 +155,44 @@ class InterviewHandler:
         if subject_id is None:
             return f"没有找到「{routing.identifier}」的追番记录，请检查名称或使用 subject_id。"
 
-        key = (subject_id, routing.episode)
+        key = (subject_id, routing.start_episode, routing.end_episode)
         if key not in self._active_sessions:
-            for (sid, ep), eng in self._active_sessions.items():
+            for (sid, start_ep, end_ep), eng in self._active_sessions.items():
                 if sid == subject_id:
                     return (
-                        f"《{eng.subject_name}》第{routing.episode}集没有活跃的访谈。\n"
-                        f"当前活跃的是第{ep}集。"
+                        f"《{eng.subject_name}》"
+                        f"{self._format_episode_range(routing.start_episode, routing.end_episode)}"
+                        "没有活跃的访谈。\n"
+                        f"当前活跃的是{self._format_episode_range(start_ep, end_ep)}。"
                     )
             return f"没有找到 subject_id={subject_id} 的活跃访谈。"
 
-        for (sid, ep), engine in sessions:
-            if (sid, ep) == key:
-                return await self._route_to(((sid, ep), engine), routing.answer, event.unified_msg_origin)
+        for (sid, start_ep, end_ep), engine in sessions:
+            if (sid, start_ep, end_ep) == key:
+                return await self._route_to(
+                    ((sid, start_ep, end_ep), engine), routing.answer, event.unified_msg_origin
+                )
 
     async def _route_to(self, session_item, answer: str, umo: str) -> str | None:
-        (sid, ep), engine = session_item
+        (sid, start_ep, end_ep), engine = session_item
         response = await engine.handle_answer(answer, umo)
         if response is not None:
             if engine.state == InterviewState.ENDED:
                 await self._save_markdown(engine)
-                del self._active_sessions[(sid, ep)]
+                del self._active_sessions[(sid, start_ep, end_ep)]
             return response
         return None
 
     def _parse_routing(self, text: str) -> RoutingInfo | None:
-        """解析 [番剧名或ID] 集数：回复内容 格式。"""
+        """解析 [番剧名或ID] 集数或范围：回复内容 格式。"""
         m = ROUTING_RE.match(text)
         if not m:
             return None
         return RoutingInfo(
             identifier=m.group(1).strip(),
-            episode=int(m.group(2)),
-            answer=m.group(3).strip(),
+            start_episode=int(m.group(2)),
+            end_episode=int(m.group(3) or m.group(2)),
+            answer=m.group(4).strip(),
         )
 
     async def _resolve_identifier(self, identifier: str) -> int | None:
@@ -195,11 +208,11 @@ class InterviewHandler:
 
     def _routing_help_prompt(self) -> str:
         lines = ["当前有多个活跃访谈，请使用以下格式指定要回复的番剧：", ""]
-        for (sid, ep), engine in self._active_sessions.items():
+        for (sid, start_ep, end_ep), engine in self._active_sessions.items():
             name = engine.subject_name
-            lines.append(f"  [{sid}] 第{ep}集 — {name}")
+            lines.append(f"  [{sid}] {self._format_episode_range(start_ep, end_ep)} — {name}")
         lines.append("")
-        lines.append("格式：[番剧名或ID] 集数：回复内容")
+        lines.append("格式：[番剧名或ID] 集数或范围：回复内容")
         lines.append("例如：[上伊那牡丹] 9：我觉得这集...")
         return "\n".join(lines)
 
@@ -225,6 +238,7 @@ class InterviewHandler:
             anime_name=engine.subject_name,
             season=season,
             episode=engine.episode,
+            episode_start=engine.start_episode,
             qa_pairs=qa_pairs,
             subject_id=engine.subject_id,
         )
@@ -233,7 +247,7 @@ class InterviewHandler:
     def get_routing_hint(self, exclude: tuple | None = None) -> str:
         """如果存在多个活跃会话，返回路由前缀提示；否则返回空字符串。
 
-        exclude: 可选，排除某个 (subject_id, episode)，用于只提示"其他"会话。
+        exclude: 可选，排除某个 (subject_id, start_episode, end_episode)，用于只提示"其他"会话。
         """
         sessions = [(k, e) for k, e in self._active_sessions.items() if k != exclude]
         if not sessions:
@@ -243,14 +257,23 @@ class InterviewHandler:
             "📋 回复时请加上路由前缀，指定要回复的访谈：",
             "",
         ]
-        for (sid, ep), engine in sessions:
-            lines.append(f"  [{sid}] 第{ep}集 — {engine.subject_name}")
+        for (sid, start_ep, end_ep), engine in sessions:
+            lines.append(
+                f"  [{sid}] {self._format_episode_range(start_ep, end_ep)} — {engine.subject_name}"
+            )
         lines.append("")
-        lines.append("格式：[番剧名或ID] 集数：回复内容")
+        lines.append("格式：[番剧名或ID] 集数或范围：回复内容")
         lines.append("例如：[上伊那牡丹] 9：我觉得这集...")
         return "\n".join(lines)
 
-    def has_active_session(self, subject_id: int = 0, episode: int = 0) -> bool:
-        if subject_id and episode:
-            return (subject_id, episode) in self._active_sessions
+    def has_active_session(self, subject_id: int = 0, start_episode: int = 0,
+                           end_episode: int = 0) -> bool:
+        if subject_id and start_episode and end_episode:
+            return (subject_id, start_episode, end_episode) in self._active_sessions
         return len(self._active_sessions) > 0
+
+    @staticmethod
+    def _format_episode_range(start_episode: int, end_episode: int) -> str:
+        if start_episode == end_episode:
+            return f"第{end_episode}集"
+        return f"第{start_episode}-{end_episode}集"

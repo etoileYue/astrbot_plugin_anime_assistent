@@ -286,6 +286,23 @@ class TestAppendToEpisode:
 
 class TestRoundtrip:
 
+    def test_save_episode_range_uses_single_range_heading(self, tmp_path):
+        storage = _make_storage(tmp_path)
+
+        storage.save_episode(
+            anime_name="葬送的芙莉莲",
+            season="2026.4",
+            episode=12,
+            episode_start=11,
+            qa_pairs=[("范围问题", "范围回答")],
+            subject_id=400602,
+        )
+
+        content = storage.load_anime("葬送的芙莉莲", "2026.4")
+        assert "## ep11-12" in content
+        assert "## ep11\n" not in content
+        assert "## ep12\n" not in content
+
     def test_save_then_delete(self, tmp_path):
         """先保存再删除的往返测试。"""
         storage = _make_storage(tmp_path)

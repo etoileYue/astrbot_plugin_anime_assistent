@@ -15,15 +15,14 @@ async def sync_from_bangumi(db: Database, config) -> tuple[int, int, int, int, l
     Returns:
         (总数, 新增数, 更新数, 删除数, progress_diffs)
         progress_diffs: 进度有变化的条目列表，每个 dict 含
-            subject_id, subject_name, subject_name_cn, bangumi_eps, local_eps
+            subject_id, subject_name, subject_name_cn, start_episode, end_episode
     """
     client = BangumiClient(config)
     try:
         collections = await client.get_watching_collections()
 
         if not collections:
-            logger.info("Bangumi「在看」列表为空，无需同步。")
-            return (0, 0, 0, 0, [])
+            logger.info("Bangumi「在看」列表为空，继续检查是否有已看完条目。")
 
         existing = await db.list_subscriptions()
         existing_ids = {sub.subject_id for sub in existing}
@@ -81,6 +80,8 @@ async def sync_from_bangumi(db: Database, config) -> tuple[int, int, int, int, l
                     "subject_id": item.subject_id,
                     "subject_name": item.subject_name,
                     "subject_name_cn": item.subject_name_cn,
+                    "start_episode": old_eps + 1,
+                    "end_episode": item.ep_status,
                     "bangumi_eps": item.ep_status,
                     "local_eps": old_eps,
                 })
@@ -103,13 +104,20 @@ async def sync_from_bangumi(db: Database, config) -> tuple[int, int, int, int, l
                     sub = next((s for s in existing if s.subject_id == sid), None)
                     old_eps = old_watched.get(sid, 0)
                     bangumi_eps = coll.get("ep_status", 0) or 0
-                    # 以 Bangumi 记录的集数为准，若不可用则退到本地记录
-                    episode = bangumi_eps or old_eps
-                    if episode > 0:
+                    subject = coll.get("subject") or {}
+                    known_total = max(
+                        sub.total_eps if sub else 0,
+                        subject.get("eps", 0) or 0,
+                    )
+                    # 标为“看过”时，ep_status 可能未回传；此时总集数代表完成进度。
+                    episode = max(bangumi_eps, known_total)
+                    if episode > old_eps:
                         progress_diffs.append({
                             "subject_id": sid,
                             "subject_name": sub.subject_name if sub else "",
                             "subject_name_cn": sub.subject_name_cn if sub else "",
+                            "start_episode": old_eps + 1,
+                            "end_episode": episode,
                             "bangumi_eps": episode,
                             "local_eps": old_eps,
                         })
