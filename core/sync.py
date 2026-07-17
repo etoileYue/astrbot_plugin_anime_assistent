@@ -37,25 +37,8 @@ async def sync_from_bangumi(db: Database, config) -> tuple[int, int, int, int, l
             bangumi_ids.add(item.subject_id)
             is_new = item.subject_id not in existing_ids
             old_eps = old_watched.get(item.subject_id, 0)
-            # 新增记录通过剧集数据推断番剧是否连载中；
-            # 已存在记录不更新 airing（由调度器维护）。
-            if is_new and item.eps > 0:
-                try:
-                    await asyncio.sleep(0.3)
-                    episodes = await client.get_episodes(item.subject_id)
-                    released = [ep for ep in episodes if ep.ep > 0 and (ep.name or ep.name_cn)]
-                    if released:
-                        latest_ep = max(ep.ep for ep in released)
-                        airing = 0 if latest_ep >= item.eps else 1
-                    else:
-                        airing = 1
-                except Exception:
-                    logger.warning(
-                        f"获取 {item.subject_id} 剧集失败，默认标记为连载中"
-                    )
-                    airing = 1
-            else:
-                airing = 1
+            # 更新提醒由 Tenrai 排期决定；不再通过 Bangumi 分集接口推断连载状态。
+            airing = 1
 
             await db.conn.execute(
                 """INSERT INTO subscriptions

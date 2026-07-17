@@ -3,10 +3,12 @@
 import asyncio
 import logging
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 
 from astrbot.api.event import MessageChain
 
 logger = logging.getLogger(__name__)
+SHANGHAI = ZoneInfo("Asia/Shanghai")
 
 
 class UpdateScheduler:
@@ -63,11 +65,16 @@ class UpdateScheduler:
             )
             await asyncio.sleep(interval_hours * 3600)
 
-    async def check_once(self):
-        await self._do_check()
+    async def check_once(self, refresh_schedules: bool = False):
+        """执行一轮检查；仅用户显式 /sync 时刷新全部自动排期。"""
+        return await self._do_check(refresh_schedules=refresh_schedules)
 
-    async def _do_check(self):
-        from ..api.bangumi import BangumiClient
+    async def _do_check(self, refresh_schedules: bool = False):
+        from ..core.schedule import (
+            occurrence_this_week,
+            refresh_auto_schedules,
+            resolve_missing_schedules,
+        )
         from ..core.sync import sync_from_bangumi
 
         db = self._plugin.db
@@ -90,6 +97,18 @@ class UpdateScheduler:
                 f"Bangumi 同步失败: {e.__class__.__name__}: {e}"
             )
             total, added, updated, removed, progress_diffs = 0, 0, 0, 0, []
+
+        # 新增的云端收藏和升级后的存量记录只会在这里补齐一次；手动排期不受影响。
+        try:
+            if refresh_schedules:
+                resolved = await refresh_auto_schedules(db, self._plugin.plugin_config)
+            else:
+                resolved = await resolve_missing_schedules(db, self._plugin.plugin_config)
+            if resolved:
+                success = sum(result.found for result in resolved)
+                logger.info("[排期] 已查询 %s 条，成功 %s 条", len(resolved), success)
+        except Exception as e:
+            logger.warning("补齐 Tenrai 排期失败（不影响本轮检查）：%s", e)
 
         # Step B: 对进度领先的条目自动触发访谈
         interview_count = 0
@@ -143,69 +162,67 @@ class UpdateScheduler:
 
         logger.info(f"[Step B] 自动访谈: 触发了 {interview_count} 个会话")
 
-        # Step C: 检查新剧集发布，比对 last_notified_ep 发送通知
-        subs = await db.get_active_subscriptions()
+        # Step C: 只按北京时间的播出排期提醒，不再查询 Bangumi 分集。
+        subs = await db.get_active_scheduled_subscriptions()
         updated_subs = []
+        now = datetime.now(SHANGHAI)
+        last_check = await self._last_check_in_shanghai(db)
+        interval = max(float(self._plugin.plugin_config.check_interval_hours), 0.01)
+        # 超过两个调度周期视为停机恢复，不补发已经错过的排期。
+        continuous = last_check is not None and (now - last_check).total_seconds() <= interval * 7200
 
-        if subs:
-            client = BangumiClient(self._plugin.plugin_config)
-            try:
-                for sub in subs:
-                    if not isinstance(sub.subject_id, int) or sub.subject_id <= 0:
-                        logger.warning(
-                            f"跳过 {sub.subject_name}: subject_id 无效 ({sub.subject_id!r})"
-                        )
-                        continue
-                    try:
-                        episodes = await client.get_episodes(sub.subject_id)
-                    except Exception as e:
-                        logger.error(
-                            f"获取 {sub.subject_name} (id={sub.subject_id}) 集数失败: "
-                            f"{e.__class__.__name__}: {e}"
-                        )
-                        continue
-
-                    if not episodes:
-                        continue
-
-                    released = [
-                        ep for ep in episodes
-                        if ep.ep > 0 and (ep.name or ep.name_cn)
-                    ]
-                    if not released:
-                        continue
-                    latest_ep = max(ep.ep for ep in released)
-                    if latest_ep > sub.last_notified_ep:
-                        await db.update_last_notified_ep(sub.id, latest_ep)
-                        updated_subs.append((sub, latest_ep))
-                    if sub.total_eps and latest_ep >= sub.total_eps:
-                        await db.update_airing(sub.subject_id, 0)
-            finally:
-                await client.close()
+        if continuous:
+            for sub in subs:
+                try:
+                    occurrence = occurrence_this_week(sub.schedule_weekday, sub.schedule_time, now)
+                except (TypeError, ValueError):
+                    logger.warning("跳过无效排期：%s", sub.subject_name)
+                    continue
+                marker = occurrence.isoformat()
+                if last_check <= occurrence <= now and sub.last_schedule_notified_at != marker:
+                    await db.update_last_schedule_notified(sub.subject_id, marker)
+                    updated_subs.append(sub)
 
         logger.info(
-            f"[Step C] 剧集检查: 扫描了 {len(subs)} 个订阅, "
-            f"发现 {len(updated_subs)} 个更新"
+            f"[Step C] 排期检查: 扫描了 {len(subs)} 个有效排期, "
+            f"触发 {len(updated_subs)} 条提醒"
         )
 
         if updated_subs and umo:
             await self._send_notifications(umo, updated_subs)
 
         # 更新检查时间
-        now = datetime.now(timezone.utc).isoformat()
-        await db.set_task_state("last_check_time", now)
+        now_utc = now.astimezone(timezone.utc).isoformat()
+        await db.set_task_state("last_check_time", now_utc)
 
         logger.info(
-            f"番剧更新检查完成 (时间: {now})"
+            f"番剧更新检查完成 (时间: {now_utc})"
         )
         logger.info("=" * 40)
+        return resolved if 'resolved' in locals() else []
+
+    async def _last_check_in_shanghai(self, db) -> datetime | None:
+        value = await db.get_task_state("last_check_time")
+        if not value:
+            return None
+        try:
+            parsed = datetime.fromisoformat(value)
+            if parsed.tzinfo is None:
+                parsed = parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(SHANGHAI)
+        except ValueError:
+            logger.warning("忽略无法解析的 last_check_time：%r", value)
+            return None
 
     async def _send_notifications(self, umo: str, updated: list):
-        lines = ["【番剧更新提醒】"]
-        for sub, latest_ep in updated:
+        lines = ["【番剧预计更新提醒】"]
+        weekday_names = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+        for sub in updated:
             name = sub.subject_name_cn or sub.subject_name
             lines.append(f"{name}")
-            lines.append(f"第{latest_ep}集已更新")
+            lines.append(
+                f"预计更新（北京时间每周{weekday_names[sub.schedule_weekday]} {sub.schedule_time}）"
+            )
             lines.append("")
         msg = "\n".join(lines).strip()
         chain = MessageChain().message(msg)

@@ -5,9 +5,9 @@
 ## 功能
 
 - **番剧搜索** — `/search 芙莉莲` 搜索 Bangumi 条目
-- **追番管理** — `/sub add|list|remove` 管理追番列表
+- **追番管理** — `/sub add|list|remove` 管理追番列表，可用 `/sub schedule` 管理提醒排期
 - **进度同步** — 发送"芙莉莲15看完"自动同步观看进度到 Bangumi
-- **更新提醒** — 定时检查番剧更新，自动推送 QQ 通知
+- **更新提醒** — 根据 MAL 播出排期按北京时间推送“预计更新”QQ 通知
 - **观感访谈** — 同步进度后 LLM 自动发起多轮访谈对话
 - **Markdown 记录** — 访谈内容自动保存为 Obsidian 兼容的 Markdown 文件
 - **Web 笔记查看** — 浏览器访问只读笔记页面（端口 58080）
@@ -28,8 +28,9 @@
 | `/sub add <id>` | 添加追番 |
 | `/sub list` | 查看追番列表 |
 | `/sub remove <id>` | 移除追番 |
-| `/sub sync` | 从 Bangumi 同步「在看」列表 |
-| `/sync` | 手动触发更新检查 |
+| `/sub schedule <标识> <周一-周日> <HH:MM>` | 手动设置北京时间提醒 |
+| `/sub schedule show\|clear\|auto <标识>` | 查看、关闭或重新自动匹配排期 |
+| `/sync` | 同步 Bangumi、检查提醒并刷新自动排期 |
 | `/note <标识> <集数>` | 手动触发观感访谈 |
 | `/notes list` | 查看观感记录 |
 

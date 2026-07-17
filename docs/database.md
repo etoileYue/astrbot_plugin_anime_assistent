@@ -26,12 +26,23 @@ CREATE TABLE subscriptions (
     total_eps   INTEGER,                       -- 总集数
     last_notified_ep INTEGER DEFAULT 0,        -- 最后一次通知的集数
     watched_eps INTEGER DEFAULT 0,             -- 已看集数（来源：Bangumi ep_status）
+    airing      INTEGER DEFAULT 1,             -- 历史兼容字段，不参与排期提醒
+    mal_id      INTEGER,                       -- Tenrai 严格匹配后的 MAL 条目 ID
+    schedule_weekday INTEGER,                  -- 北京时间星期，周一=0 至周日=6
+    schedule_time TEXT,                        -- 北京时间 HH:MM
+    schedule_timezone TEXT,                    -- 有效排期固定为 Asia/Shanghai
+    schedule_source TEXT,                      -- 'mal' 自动匹配，'manual' 手动/关闭
+    last_schedule_notified_at TEXT,            -- 本周已提醒的播出时刻 ISO 时间
+    schedule_checked INTEGER DEFAULT 0,        -- 是否已完成一次自动查询
+    schedule_checked_at TEXT,                  -- 最近一次自动查询时间
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 ```
 
 **说明**：
-- `last_notified_ep` 是更新检测的核心字段。定时任务获取最新集数后与此字段对比，若新集数更大则触发通知。
+- 更新提醒由 `schedule_weekday` 与 `schedule_time` 驱动，所有有效值均为北京时间；调度器以 `last_schedule_notified_at` 保证同一周只提醒一次。
+- `last_notified_ep` 与 `airing` 为兼容已有数据保留，不参与更新提醒判断。
+- `schedule_source='manual'` 且没有时间表示用户已明确关闭提醒，不会被升级补齐覆盖。
 - `watched_eps` 记录已看集数，来源为 Bangumi API 返回的 `ep_status` 字段。插件初始化时自动同步，进度消息同步时也会更新。
 - `subject_name` 是本地缓存，避免每次显示时都调 API。
 - `status` 值与 Bangumi 收藏类型一致。

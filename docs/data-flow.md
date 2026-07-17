@@ -3,7 +3,7 @@
 ## 0. Bangumi 收藏同步（插件初始化 / 手动触发）
 
 ```
-Plugin initialize() 或用户执行 /sub sync
+Plugin initialize() 或用户执行 /sync
   │
   ├─ 1. 调 Bangumi API GET /v0/users/-/collections?type=3&limit=50&offset=0
   │     分页获取所有「在看」收藏（token 自动标识用户）
@@ -11,12 +11,15 @@ Plugin initialize() 或用户执行 /sub sync
   │     ├─ INSERT OR IGNORE INTO subscriptions（不覆盖已有记录）
   │     └─ INSERT OR IGNORE INTO aliases（name, name_cn, subject_id）
   ├─ 3. commit
-  └─ 4. 返回统计：总数 / 新增数
+  ├─ 4. 对尚未查询且无手动设置的条目，调用 Tenrai 搜索前五项
+  │     并仅接受与 Bangumi 日文原名严格匹配的 MAL 排期
+  └─ 5. 返回统计：总数 / 新增数
 ```
 
 **注意**：
-- last_notified_ep 初始化为 0，由下次定时更新检查自动填充
-- 使用 INSERT OR IGNORE 避免覆盖用户手动添加的订阅
+- 自动排期统一转换并保存为北京时间；查询失败不影响添加或同步成功。
+- 已填写手动排期（包括已关闭提醒）的条目不会被自动补齐覆盖。
+- 用户执行 `/sync` 时会显式重新查询所有非手动条目的自动排期。
 - 同步失败不阻塞插件启动
 
 ## 1. 番剧更新提醒（定时触发）
@@ -25,26 +28,21 @@ Plugin initialize() 或用户执行 /sub sync
 Scheduler (每N小时触发)
   │
   ├─ 1. 从 task_state 读取 last_check_time
-  ├─ 2. 从 subscriptions 读取所有 status=3（在看）的条目
-  ├─ 3. 对每个条目：
-  │     ├─ 调 Bangumi API GET /v0/users/-/collections/{subject_id}
-  │     │   获取用户收藏状态（含当前进度 ep_status）
-  │     └─ 调 Bangumi API GET /v0/episodes?subject_id={subject_id}
-  │         获取最新集数
-  ├─ 4. 比较 new_ep > subscriptions.last_notified_ep
-  ├─ 5. 若有更新：
-  │     ├─ 构造通知消息
-  │     ├─ 通过 AstrBot 发 QQ 消息给用户
-  │     └─ 更新 subscriptions.last_notified_ep = new_ep
+  ├─ 2. 从 subscriptions 读取 status=3 且具有有效排期的条目
+  ├─ 3. 使用 Asia/Shanghai 计算每条目本周的播出时刻
+  ├─ 4. 若本次检查跨过播出时刻，且本周尚未提醒：
+  │     ├─ 构造“预计更新”通知并通过 AstrBot 发 QQ 消息
+  │     └─ 写入 subscriptions.last_schedule_notified_at
+  ├─ 5. 长时间停机恢复时不补发过期排期
   └─ 6. 更新 task_state.last_check_time
 ```
 
 **通知消息格式：**
 
 ```
-【番剧更新提醒】
+【番剧预计更新提醒】
 葬送的芙莉莲
-第16集已更新
+预计更新（北京时间每周周五 22:00）
 ```
 
 ## 2. 同步观看进度（用户消息触发）

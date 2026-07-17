@@ -21,6 +21,14 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     last_notified_ep INTEGER DEFAULT 0,
     watched_eps INTEGER DEFAULT 0,
     airing      INTEGER DEFAULT 1,
+    mal_id      INTEGER,
+    schedule_weekday INTEGER,
+    schedule_time TEXT,
+    schedule_timezone TEXT,
+    schedule_source TEXT,
+    last_schedule_notified_at TEXT,
+    schedule_checked INTEGER DEFAULT 0,
+    schedule_checked_at TEXT,
     created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -69,18 +77,25 @@ class Database:
         self._db = await aiosqlite.connect(self._path)
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(SCHEMA)
-        try:
-            await self._db.execute(
-                "ALTER TABLE subscriptions ADD COLUMN watched_eps INTEGER DEFAULT 0"
-            )
-        except Exception:
-            pass
-        try:
-            await self._db.execute(
-                "ALTER TABLE subscriptions ADD COLUMN airing INTEGER DEFAULT 1"
-            )
-        except Exception:
-            pass
+        # SQLite 不支持 ADD COLUMN IF NOT EXISTS；逐项尝试使升级迁移可重复执行。
+        for column, definition in (
+            ("watched_eps", "INTEGER DEFAULT 0"),
+            ("airing", "INTEGER DEFAULT 1"),
+            ("mal_id", "INTEGER"),
+            ("schedule_weekday", "INTEGER"),
+            ("schedule_time", "TEXT"),
+            ("schedule_timezone", "TEXT"),
+            ("schedule_source", "TEXT"),
+            ("last_schedule_notified_at", "TEXT"),
+            ("schedule_checked", "INTEGER DEFAULT 0"),
+            ("schedule_checked_at", "TEXT"),
+        ):
+            try:
+                await self._db.execute(
+                    f"ALTER TABLE subscriptions ADD COLUMN {column} {definition}"
+                )
+            except Exception:
+                pass
         try:
             await self._db.execute(
                 "ALTER TABLE interviews ADD COLUMN episode_start INTEGER"
@@ -107,9 +122,16 @@ class Database:
         watched_eps: int = 0, airing: int = 1,
     ) -> Subscription:
         await self.conn.execute(
-            """INSERT OR REPLACE INTO subscriptions
+            """INSERT INTO subscriptions
                (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps, airing)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(subject_id) DO UPDATE SET
+               subject_name = excluded.subject_name,
+               subject_name_cn = excluded.subject_name_cn,
+               total_eps = excluded.total_eps,
+               status = excluded.status,
+               watched_eps = excluded.watched_eps,
+               airing = excluded.airing""",
             (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps, airing),
         )
         await self.conn.commit()
@@ -126,48 +148,101 @@ class Database:
         )
         await self.conn.commit()
 
+    @staticmethod
+    def _subscription_from_row(r: aiosqlite.Row) -> Subscription:
+        """从具名 Row 构造对象，避免升级后列顺序变化造成字段错位。"""
+        return Subscription(
+            id=r["id"], subject_id=r["subject_id"], subject_name=r["subject_name"],
+            subject_name_cn=r["subject_name_cn"] or "", status=r["status"],
+            total_eps=r["total_eps"] or 0, last_notified_ep=r["last_notified_ep"] or 0,
+            watched_eps=r["watched_eps"] or 0,
+            airing=r["airing"] if r["airing"] is not None else 1,
+            mal_id=r["mal_id"], schedule_weekday=r["schedule_weekday"],
+            schedule_time=r["schedule_time"] or "",
+            schedule_timezone=r["schedule_timezone"] or "",
+            schedule_source=r["schedule_source"] or "",
+            last_schedule_notified_at=r["last_schedule_notified_at"] or "",
+            schedule_checked=bool(r["schedule_checked"] or 0),
+            schedule_checked_at=r["schedule_checked_at"] or "",
+            created_at=r["created_at"],
+        )
+
     async def get_subscription(self, subject_id: int) -> Optional[Subscription]:
         row = await self.conn.execute_fetchall(
             "SELECT * FROM subscriptions WHERE subject_id = ?",
             (subject_id,),
         )
         if row:
-            r = row[0]
-            return Subscription(
-                id=r[0], subject_id=r[1], subject_name=r[2],
-                subject_name_cn=r[3] or "", status=r[4], total_eps=r[5] or 0,
-                last_notified_ep=r[6] or 0, watched_eps=r[7] or 0,
-                airing=r[8] if r[8] is not None else 1, created_at=r[9],
-            )
+            return self._subscription_from_row(row[0])
         return None
 
     async def list_subscriptions(self) -> list[Subscription]:
         rows = await self.conn.execute_fetchall(
             "SELECT * FROM subscriptions ORDER BY created_at DESC",
         )
-        results = []
-        for r in rows:
-            results.append(Subscription(
-                id=r[0], subject_id=r[1], subject_name=r[2],
-                subject_name_cn=r[3] or "", status=r[4], total_eps=r[5] or 0,
-                last_notified_ep=r[6] or 0, watched_eps=r[7] or 0, airing=r[8] if r[8] is not None else 1,
-                created_at=r[9],
-            ))
-        return results
+        return [self._subscription_from_row(r) for r in rows]
 
     async def get_active_subscriptions(self) -> list[Subscription]:
+        """旧接口，保留给可能的外部调用；更新提醒请使用排期接口。"""
         rows = await self.conn.execute_fetchall(
             "SELECT * FROM subscriptions WHERE status = 3 AND airing = 1"
         )
-        results = []
-        for r in rows:
-            results.append(Subscription(
-                id=r[0], subject_id=r[1], subject_name=r[2],
-                subject_name_cn=r[3] or "", status=r[4], total_eps=r[5] or 0,
-                last_notified_ep=r[6] or 0, watched_eps=r[7] or 0, airing=r[8] if r[8] is not None else 1,
-                created_at=r[9],
-            ))
-        return results
+        return [self._subscription_from_row(r) for r in rows]
+
+    async def get_active_scheduled_subscriptions(self) -> list[Subscription]:
+        rows = await self.conn.execute_fetchall(
+            """SELECT * FROM subscriptions
+               WHERE status = 3
+                 AND schedule_weekday BETWEEN 0 AND 6
+                 AND schedule_time IS NOT NULL AND schedule_time != ''"""
+        )
+        return [self._subscription_from_row(r) for r in rows]
+
+    async def get_subscriptions_needing_schedule_resolution(self) -> list[Subscription]:
+        rows = await self.conn.execute_fetchall(
+            """SELECT * FROM subscriptions
+               WHERE COALESCE(schedule_checked, 0) = 0
+                 AND COALESCE(schedule_source, '') != 'manual'"""
+        )
+        return [self._subscription_from_row(r) for r in rows]
+
+    async def get_subscriptions_for_auto_schedule_refresh(self) -> list[Subscription]:
+        """返回可由 Tenrai 刷新的条目，明确排除用户手动设置或关闭的条目。"""
+        rows = await self.conn.execute_fetchall(
+            """SELECT * FROM subscriptions
+               WHERE COALESCE(schedule_source, '') != 'manual'"""
+        )
+        return [self._subscription_from_row(r) for r in rows]
+
+    async def set_schedule(
+        self, subject_id: int, *, weekday: int | None, time: str | None,
+        source: str | None, mal_id: int | None = None,
+        last_notified_at: str | None = None, checked: bool = True,
+    ):
+        await self.conn.execute(
+            """UPDATE subscriptions SET mal_id = ?, schedule_weekday = ?, schedule_time = ?,
+               schedule_timezone = ?, schedule_source = ?, last_schedule_notified_at = ?,
+               schedule_checked = ?, schedule_checked_at = CURRENT_TIMESTAMP
+               WHERE subject_id = ?""",
+            (mal_id, weekday, time, "Asia/Shanghai" if weekday is not None and time else None,
+             source, last_notified_at, int(checked), subject_id),
+        )
+        await self.conn.commit()
+
+    async def record_schedule_check(self, subject_id: int):
+        await self.conn.execute(
+            """UPDATE subscriptions SET schedule_checked = 1,
+               schedule_checked_at = CURRENT_TIMESTAMP WHERE subject_id = ?""",
+            (subject_id,),
+        )
+        await self.conn.commit()
+
+    async def update_last_schedule_notified(self, subject_id: int, notified_at: str):
+        await self.conn.execute(
+            "UPDATE subscriptions SET last_schedule_notified_at = ? WHERE subject_id = ?",
+            (notified_at, subject_id),
+        )
+        await self.conn.commit()
 
     async def update_last_notified_ep(self, sub_id: int, episode: int):
         await self.conn.execute(

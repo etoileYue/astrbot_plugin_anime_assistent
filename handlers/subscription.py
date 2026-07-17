@@ -3,6 +3,7 @@
 import logging
 
 from ..api.bangumi import BangumiClient, CollectionType, Subject
+from ..core.schedule import WEEKDAY_NAMES, resolve_schedule
 from ..storage.database import Database
 
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ class SubscriptionHandler:
 
     async def _do_add(self, subject: Subject, user_input: str) -> str:
         """写入订阅并保存别名，返回成功消息。"""
+        existing = await self._db.get_subscription(subject.id)
         await self._db.add_subscription(
             subject_id=subject.id,
             subject_name=subject.name,
@@ -33,29 +35,28 @@ class SubscriptionHandler:
         name = subject.name_cn or subject.name
         msg = f"已添加追番：{name} [{subject.id}]（{subject.eps}集）"
 
-        if not self._config.bangumi_access_token:
-            return msg
-
-        try:
+        if self._config.bangumi_access_token:
             client = BangumiClient(self._config)
-            collection = await client.get_collection(subject.id)
-            if collection is None:
-                await client.add_collection(subject.id, CollectionType.DOING)
+            try:
+                collection = await client.get_collection(subject.id)
+                if collection is None:
+                    await client.add_collection(subject.id, CollectionType.DOING)
+            except Exception as e:
+                logger.warning(f"同步 Bangumi 收藏失败 (subject_id={subject.id}): {e}")
+            finally:
+                await client.close()
 
-            if subject.eps:
-                try:
-                    episodes = await client.get_episodes(subject.id)
-                    released = [ep for ep in episodes if ep.ep > 0 and (ep.name or ep.name_cn)]
-                    if released:
-                        latest_ep = max(ep.ep for ep in released)
-                        if latest_ep >= subject.eps:
-                            await self._db.update_airing(subject.id, 0)
-                except Exception as e:
-                    logger.warning(f"获取 {subject.id} 剧集列表失败，跳过 airing 判断: {e}")
-
-            await client.close()
-        except Exception as e:
-            logger.warning(f"同步 Bangumi 收藏失败 (subject_id={subject.id}): {e}")
+        # 添加成功不依赖排期查询；失败时明确提示用户可用北京时间手动覆盖。
+        sub = await self._db.get_subscription(subject.id)
+        # 重复添加不可覆盖既有手动排期；仅为新条目或升级遗留的未查询条目补齐。
+        if sub and not sub.schedule_checked and sub.schedule_source != "manual":
+            result = await resolve_schedule(self._db, sub, self._config)
+            if result.found:
+                msg += f"\n{result.message}。"
+            else:
+                msg += f"\n自动排期未设置：{result.message}。可用 /sub schedule <番剧标识> <周一-周日> <HH:MM> 手动设置（北京时间）。"
+        elif existing and existing.schedule_weekday is not None and existing.schedule_time:
+            msg += "\n已保留原有的北京时间排期设置。"
 
         return msg
 
@@ -118,13 +119,16 @@ class SubscriptionHandler:
             name = sub.subject_name_cn or sub.subject_name
             status = STATUS_MAP.get(sub.status, "未知")
             watched = sub.watched_eps
-            released = sub.last_notified_ep
-            if released > 0:
-                eps = f"{watched}/{released}"
+            eps = f"{watched}/{sub.total_eps}" if sub.total_eps else str(watched)
+            if sub.schedule_weekday is not None and sub.schedule_time:
+                schedule = f"；每周{WEEKDAY_NAMES[sub.schedule_weekday]} {sub.schedule_time}"
+            elif sub.schedule_source == "manual":
+                schedule = "；更新提醒已关闭"
+            elif sub.schedule_checked:
+                schedule = "；未获取到自动排期"
             else:
-                eps = str(watched)
-            airing = " 🔄" if sub.airing else ""
-            lines.append(f"  [{sub.subject_id}] {name}{airing} — {status} ({eps})")
+                schedule = "；排期查询中"
+            lines.append(f"  [{sub.subject_id}] {name} — {status} ({eps}){schedule}")
         return "\n".join(lines)
 
     async def remove_subscription(self, subject_id: int) -> str:

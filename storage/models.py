@@ -15,6 +15,14 @@ class Subscription:
     last_notified_ep: int = 0
     watched_eps: int = 0
     airing: int = 1
+    mal_id: Optional[int] = None
+    schedule_weekday: Optional[int] = None
+    schedule_time: str = ""
+    schedule_timezone: str = ""
+    schedule_source: str = ""
+    last_schedule_notified_at: str = ""
+    schedule_checked: bool = False
+    schedule_checked_at: str = ""
     created_at: str = ""
 
 
