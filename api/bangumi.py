@@ -43,6 +43,7 @@ class Episode:
     name: str
     name_cn: str
     airdate: str
+    type: int = 0  # 0=正片；1=SP、2=OP、3=ED 等不用于更新提醒
 
 
 @dataclass
@@ -199,12 +200,18 @@ class BangumiClient:
                 params={"subject_id": subject_id, "limit": limit, "offset": offset},
             )
             for item in data.get("data", []):
+                raw_type = item.get("type", 0)
+                try:
+                    episode_type = int(raw_type) if raw_type is not None else 0
+                except (TypeError, ValueError):
+                    episode_type = 0
                 all_items.append(Episode(
                     id=item["id"],
                     ep=item.get("ep", 0) or 0,
                     name=item.get("name", ""),
                     name_cn=item.get("name_cn", ""),
                     airdate=item.get("airdate", ""),
+                    type=episode_type,
                 ))
             total = data.get("total", 0)
             offset += limit

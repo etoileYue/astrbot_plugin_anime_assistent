@@ -18,8 +18,8 @@ Plugin initialize() 或用户执行 /sync
 
 **注意**：
 - 自动排期统一转换并保存为北京时间；查询失败不影响添加或同步成功。
-- 已填写手动排期（包括已关闭提醒）的条目不会被自动补齐覆盖。
-- 用户执行 `/sync` 时会显式重新查询所有非手动条目的自动排期。
+- 已填写手动排期（包括已关闭提醒）的条目不会被自动排期覆盖；有效手动排期只同步 Tenrai 的 `airing` 生命周期。
+- 每轮后台检查和用户执行 `/sync` 都会刷新所有启用提醒的 Tenrai 信息。
 - 同步失败不阻塞插件启动
 
 ## 1. 番剧更新提醒（定时触发）
@@ -28,21 +28,23 @@ Plugin initialize() 或用户执行 /sync
 Scheduler (每N小时触发)
   │
   ├─ 1. 从 task_state 读取 last_check_time
-  ├─ 2. 从 subscriptions 读取 status=3 且具有有效排期的条目
-  ├─ 3. 使用 Asia/Shanghai 计算每条目本周的播出时刻
-  ├─ 4. 若本次检查跨过播出时刻，且本周尚未提醒：
-  │     ├─ 构造“预计更新”通知并通过 AstrBot 发 QQ 消息
-  │     └─ 写入 subscriptions.last_schedule_notified_at
-  ├─ 5. 长时间停机恢复时不补发过期排期
-  └─ 6. 更新 task_state.last_check_time
+  ├─ 2. 对所有启用提醒查询 Tenrai：自动排期可更新；手动排期只更新 airing
+  │     └─ 严格匹配且 airing=false → subscriptions.airing=0，自动停止提醒
+  ├─ 3. 从 subscriptions 读取 status=3、airing=1 且具有有效排期的条目
+  ├─ 4. 使用 Asia/Shanghai 计算每条目本周的播出时刻
+  ├─ 5. 若本次检查跨过播出时刻，且本周尚未提醒：
+  │     ├─ 调 Bangumi 分集接口，以发布日期匹配当天的 type=0 正片集数
+  │     ├─ 仅在确认集数后构造“预计更新第 N 集”通知并通过 AstrBot 发 QQ 消息
+  │     └─ 发送成功后写入 subscriptions.last_schedule_notified_at
+  ├─ 6. 长时间停机恢复时不补发过期排期
+  └─ 7. 更新 task_state.last_check_time
 ```
 
 **通知消息格式：**
 
 ```
 【番剧预计更新提醒】
-葬送的芙莉莲
-预计更新（北京时间每周周五 22:00）
+《葬送的芙莉莲》预计更新第15集（北京时间每周周五 22:00）
 ```
 
 ## 2. 同步观看进度（用户消息触发）

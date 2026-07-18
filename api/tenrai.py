@@ -32,8 +32,9 @@ def normalize_japanese_title(title: str) -> str:
 @dataclass(frozen=True)
 class BroadcastSchedule:
     mal_id: int
-    weekday: int  # Monday=0, already converted to Asia/Shanghai
-    time: str     # HH:MM, already converted to Asia/Shanghai
+    airing: bool
+    weekday: int | None = None  # Monday=0, already converted to Asia/Shanghai
+    time: str = ""             # HH:MM, already converted to Asia/Shanghai
 
 
 class TenraiClient:
@@ -88,17 +89,28 @@ class TenraiClient:
 
     @staticmethod
     def _to_shanghai(item: dict[str, Any]) -> BroadcastSchedule | None:
+        mal_id = item.get("mal_id")
+        airing = item.get("airing")
+        # 不把缺失或非布尔的生命周期信息猜成「连载中」：这样查询结果异常时
+        # 调用方会保留原有提醒，而不会误关或误开提醒。
+        if not isinstance(mal_id, int) or mal_id <= 0 or not isinstance(airing, bool):
+            return None
+
+        # 完结条目常常没有完整 broadcast；airing=false 本身仍是有效的
+        # 生命周期结论，不能因为缺少排期而丢失它。
+        if not airing:
+            return BroadcastSchedule(mal_id=mal_id, airing=False)
+
         broadcast = item.get("broadcast") or {}
         day = (broadcast.get("day") or "").strip()
         clock = (broadcast.get("time") or "").strip()
         tz_name = (broadcast.get("timezone") or "").strip()
-        mal_id = item.get("mal_id")
         day_map = {
             "Mondays": 0, "Tuesdays": 1, "Wednesdays": 2, "Thursdays": 3,
             "Fridays": 4, "Saturdays": 5, "Sundays": 6,
         }
-        if day not in day_map or not mal_id:
-            return None
+        if day not in day_map:
+            return BroadcastSchedule(mal_id=mal_id, airing=True)
         try:
             hour, minute = map(int, clock.split(":"))
             if not (0 <= hour <= 23 and 0 <= minute <= 59):
@@ -106,25 +118,27 @@ class TenraiClient:
             origin = ZoneInfo(tz_name)
             target = ZoneInfo("Asia/Shanghai")
         except (ValueError, ZoneInfoNotFoundError):
-            return None
+            return BroadcastSchedule(mal_id=mal_id, airing=True)
 
         # 2024-01-01 是星期一；转换后的 weekday 即是应保存的有效星期。
         local = datetime(2024, 1, 1 + day_map[day], hour, minute, tzinfo=origin)
         shanghai = local.astimezone(target)
         return BroadcastSchedule(
-            mal_id=int(mal_id), weekday=shanghai.weekday(),
+            mal_id=mal_id, airing=True, weekday=shanghai.weekday(),
             time=shanghai.strftime("%H:%M"),
         )
 
     async def find_exact_broadcast(self, japanese_title: str) -> BroadcastSchedule | None:
-        """搜索前五项，仅接受忽略空白后的 title_japanese 严格相等项。"""
+        """搜索前五项，返回日文原名严格匹配的排期与 airing 生命周期。"""
         wanted = normalize_japanese_title(japanese_title)
         if not wanted:
             return None
         for item in await self._search(japanese_title):
             if normalize_japanese_title(item.get("title_japanese") or "") != wanted:
                 continue
-            return self._to_shanghai(item)
+            result = self._to_shanghai(item)
+            if result is not None:
+                return result
         return None
 
     async def close(self):

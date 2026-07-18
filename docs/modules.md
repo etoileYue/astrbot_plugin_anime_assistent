@@ -63,8 +63,8 @@ astrbot_plugin_bangumi_assistent/
 ### core/scheduler.py — 定时调度器
 
 - 定时同步 Bangumi 收藏和观看进度，并触发必要的访谈
-- 按本地保存的北京时间播出排期发送“预计更新”提醒
-- 对新增/升级遗留条目一次性调用 Tenrai 自动补齐排期
+- 每轮以 Tenrai 的 `airing` 刷新启用提醒的生命周期；自动排期可更新，手动排期不改写时间
+- 按本地保存的北京时间播出排期和 Bangumi 正片发布日期发送“预计更新第 N 集”提醒
 - 使用 `asyncio` 后台任务循环
 
 **依赖**：`api/bangumi.py`, `api/tenrai.py`, `core/schedule.py`, `storage/database.py`

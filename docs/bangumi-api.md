@@ -112,7 +112,7 @@ Bangumi API 有频率限制。建议：
 ```python
 # 1. 获取章节列表
 episodes = await client.get_episodes(subject_id=400602)
-# 返回：[Episode(id=12345, ep=1, ...), Episode(id=12346, ep=2, ...)]
+# 返回：[Episode(id=12345, ep=1, type=0, ...), Episode(id=12346, ep=2, type=0, ...)]
 
 # 2. 找到目标集数对应的 episode_id
 target = next(e for e in episodes if e.ep == 15)
@@ -140,7 +140,11 @@ results = await client.search_subject("葬送的芙莉莲")
    - `episode_id` 是 Bangumi 内部的章节 ID，不是第几集
    - 必须通过 `GET /v0/episodes?subject_id=X` 获取映射关系
 
-3. **已知 Bug**
+3. **更新提醒只使用正片章节**
+   - `Episode.type=0` 表示正片；特别篇、OP、ED 等非 0 类型不能作为“第 N 集”提醒。
+   - 提醒时以排期当天的 `airdate` 匹配正片，无法确认集数时跳过通知。
+
+4. **已知 Bug**
    - 章节更新接口偶有 500 错误（服务端已知问题）
    - 评分更新偶有失败
    - 建议加重试机制（最多 3 次，指数退避）

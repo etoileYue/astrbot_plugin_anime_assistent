@@ -193,6 +193,7 @@ class Database:
         rows = await self.conn.execute_fetchall(
             """SELECT * FROM subscriptions
                WHERE status = 3
+                 AND COALESCE(airing, 1) = 1
                  AND schedule_weekday BETWEEN 0 AND 6
                  AND schedule_time IS NOT NULL AND schedule_time != ''"""
         )
@@ -207,10 +208,20 @@ class Database:
         return [self._subscription_from_row(r) for r in rows]
 
     async def get_subscriptions_for_auto_schedule_refresh(self) -> list[Subscription]:
-        """返回可由 Tenrai 刷新的条目，明确排除用户手动设置或关闭的条目。"""
+        """返回所有启用的提醒，供 Tenrai 刷新排期及连载生命周期。
+
+        手动排期也必须查询 ``airing``，但调用方不得改写其星期和时间；用户
+        明确关闭的提醒没有有效排期或 ``airing=0``，不会再次被自动启用。
+        """
         rows = await self.conn.execute_fetchall(
             """SELECT * FROM subscriptions
-               WHERE COALESCE(schedule_source, '') != 'manual'"""
+               WHERE status = 3
+                 AND COALESCE(airing, 1) = 1
+                 AND NOT (
+                     COALESCE(schedule_source, '') = 'manual'
+                     AND (schedule_weekday NOT BETWEEN 0 AND 6
+                          OR schedule_time IS NULL OR schedule_time = '')
+                 )"""
         )
         return [self._subscription_from_row(r) for r in rows]
 
@@ -218,14 +229,29 @@ class Database:
         self, subject_id: int, *, weekday: int | None, time: str | None,
         source: str | None, mal_id: int | None = None,
         last_notified_at: str | None = None, checked: bool = True,
+        airing: int | None = None,
     ):
         await self.conn.execute(
             """UPDATE subscriptions SET mal_id = ?, schedule_weekday = ?, schedule_time = ?,
                schedule_timezone = ?, schedule_source = ?, last_schedule_notified_at = ?,
-               schedule_checked = ?, schedule_checked_at = CURRENT_TIMESTAMP
+               schedule_checked = ?, schedule_checked_at = CURRENT_TIMESTAMP,
+               airing = COALESCE(?, airing)
                WHERE subject_id = ?""",
             (mal_id, weekday, time, "Asia/Shanghai" if weekday is not None and time else None,
-             source, last_notified_at, int(checked), subject_id),
+             source, last_notified_at, int(checked), airing, subject_id),
+        )
+        await self.conn.commit()
+
+    async def update_schedule_lifecycle(
+        self, subject_id: int, *, mal_id: int, airing: bool,
+    ):
+        """仅更新 Tenrai 确认的生命周期，不触碰用户/自动保存的排期。"""
+        await self.conn.execute(
+            """UPDATE subscriptions
+               SET mal_id = ?, airing = ?, schedule_checked = 1,
+                   schedule_checked_at = CURRENT_TIMESTAMP
+               WHERE subject_id = ?""",
+            (mal_id, int(airing), subject_id),
         )
         await self.conn.commit()
 

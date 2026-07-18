@@ -120,15 +120,18 @@ class SubscriptionHandler:
             status = STATUS_MAP.get(sub.status, "未知")
             watched = sub.watched_eps
             eps = f"{watched}/{sub.total_eps}" if sub.total_eps else str(watched)
-            if sub.schedule_weekday is not None and sub.schedule_time:
+            marker = "🔄 " if sub.airing else ""
+            if sub.airing and sub.schedule_weekday is not None and sub.schedule_time:
                 schedule = f"；每周{WEEKDAY_NAMES[sub.schedule_weekday]} {sub.schedule_time}"
-            elif sub.schedule_source == "manual":
+            elif sub.airing and sub.schedule_source == "manual":
                 schedule = "；更新提醒已关闭"
-            elif sub.schedule_checked:
+            elif sub.airing and sub.schedule_checked:
                 schedule = "；未获取到自动排期"
-            else:
+            elif sub.airing:
                 schedule = "；排期查询中"
-            lines.append(f"  [{sub.subject_id}] {name} — {status} ({eps}){schedule}")
+            else:
+                schedule = ""
+            lines.append(f"  {marker}[{sub.subject_id}] {name} — {status} ({eps}){schedule}")
         return "\n".join(lines)
 
     async def remove_subscription(self, subject_id: int) -> str:

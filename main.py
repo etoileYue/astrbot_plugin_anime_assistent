@@ -252,7 +252,11 @@ class BangumiPlugin(Star):
                 return
             name = sub.subject_name_cn or sub.subject_name
             if action == "show":
-                if sub.schedule_weekday is not None and sub.schedule_time:
+                if not sub.airing and sub.schedule_weekday is not None and sub.schedule_time:
+                    yield event.plain_result(f"《{name}》未启用更新提醒。")
+                elif not sub.airing and sub.schedule_source != "manual":
+                    yield event.plain_result(f"《{name}》未启用更新提醒。")
+                elif sub.schedule_weekday is not None and sub.schedule_time:
                     source = "MAL 自动匹配" if sub.schedule_source == "mal" else "手动设置"
                     yield event.plain_result(
                         f"《{name}》的更新提醒：每周{WEEKDAY_NAMES[sub.schedule_weekday]} "
@@ -266,14 +270,12 @@ class BangumiPlugin(Star):
             if action == "clear":
                 await self.db.set_schedule(
                     sub.subject_id, weekday=None, time=None, source="manual",
-                    mal_id=sub.mal_id, last_notified_at=None,
+                    mal_id=sub.mal_id, last_notified_at=None, airing=0,
                 )
                 yield event.plain_result(f"已关闭《{name}》的自动更新提醒。")
                 return
 
-            result = await resolve_schedule(
-                self.db, sub, self.plugin_config, clear_on_failure=True
-            )
+            result = await resolve_schedule(self.db, sub, self.plugin_config)
             if result.found:
                 yield event.plain_result(f"《{name}》{result.message}。")
             else:
@@ -301,7 +303,7 @@ class BangumiPlugin(Star):
         marker = handled_marker_for_new_schedule(weekday, clock)
         await self.db.set_schedule(
             sub.subject_id, weekday=weekday, time=clock, source="manual",
-            mal_id=sub.mal_id, last_notified_at=marker,
+            mal_id=sub.mal_id, last_notified_at=marker, airing=1,
         )
         name = sub.subject_name_cn or sub.subject_name
         yield event.plain_result(
@@ -314,7 +316,7 @@ class BangumiPlugin(Star):
     async def cmd_sync(self, event: AstrMessageEvent):
         """从 Bangumi 同步数据并检查番剧更新。"""
         self._ensure_umo(event)
-        results = await self.scheduler.check_once(refresh_schedules=True)
+        results = await self.scheduler.check_once()
         if results:
             success = sum(result.found for result in results)
             yield event.plain_result(

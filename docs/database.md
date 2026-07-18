@@ -26,7 +26,7 @@ CREATE TABLE subscriptions (
     total_eps   INTEGER,                       -- 总集数
     last_notified_ep INTEGER DEFAULT 0,        -- 最后一次通知的集数
     watched_eps INTEGER DEFAULT 0,             -- 已看集数（来源：Bangumi ep_status）
-    airing      INTEGER DEFAULT 1,             -- 历史兼容字段，不参与排期提醒
+    airing      INTEGER DEFAULT 1,             -- Tenrai 确认仍在连载=1；已完结、提醒自动停用=0
     mal_id      INTEGER,                       -- Tenrai 严格匹配后的 MAL 条目 ID
     schedule_weekday INTEGER,                  -- 北京时间星期，周一=0 至周日=6
     schedule_time TEXT,                        -- 北京时间 HH:MM
@@ -40,9 +40,10 @@ CREATE TABLE subscriptions (
 ```
 
 **说明**：
-- 更新提醒由 `schedule_weekday` 与 `schedule_time` 驱动，所有有效值均为北京时间；调度器以 `last_schedule_notified_at` 保证同一周只提醒一次。
-- `last_notified_ep` 与 `airing` 为兼容已有数据保留，不参与更新提醒判断。
-- `schedule_source='manual'` 且没有时间表示用户已明确关闭提醒，不会被升级补齐覆盖。
+- 更新提醒由 `schedule_weekday`、`schedule_time` 与 `airing=1` 共同驱动，所有有效值均为北京时间；调度器以 `last_schedule_notified_at` 保证同一周只提醒一次。
+- Tenrai 严格匹配结果的 `airing=false` 会写入 `airing=0` 并自动停用提醒；`airing=0` 的条目不再参与后续排期扫描。追番列表只以 `🔄` 标记仍在连载的条目，不为已完结条目追加提醒状态文字。
+- `schedule_source='manual'` 且没有时间表示用户已明确关闭提醒，不会被自动补齐覆盖。手动有效排期仍会同步 Tenrai 的 `airing` 生命周期，但其星期和时间不会被改写。
+- `last_notified_ep` 仅为兼容已有数据保留，不参与更新提醒判断。
 - `watched_eps` 记录已看集数，来源为 Bangumi API 返回的 `ep_status` 字段。插件初始化时自动同步，进度消息同步时也会更新。
 - `subject_name` 是本地缓存，避免每次显示时都调 API。
 - `status` 值与 Bangumi 收藏类型一致。

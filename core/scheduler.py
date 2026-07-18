@@ -7,6 +7,9 @@ from zoneinfo import ZoneInfo
 
 from astrbot.api.event import MessageChain
 
+from ..api.bangumi import BangumiClient
+from ..core.schedule import format_update_notifications, main_episode_number_for_airdate
+
 logger = logging.getLogger(__name__)
 SHANGHAI = ZoneInfo("Asia/Shanghai")
 
@@ -65,16 +68,12 @@ class UpdateScheduler:
             )
             await asyncio.sleep(interval_hours * 3600)
 
-    async def check_once(self, refresh_schedules: bool = False):
-        """执行一轮检查；仅用户显式 /sync 时刷新全部自动排期。"""
-        return await self._do_check(refresh_schedules=refresh_schedules)
+    async def check_once(self):
+        """执行一轮检查；每轮都会刷新启用提醒的 Tenrai 生命周期。"""
+        return await self._do_check()
 
-    async def _do_check(self, refresh_schedules: bool = False):
-        from ..core.schedule import (
-            occurrence_this_week,
-            refresh_auto_schedules,
-            resolve_missing_schedules,
-        )
+    async def _do_check(self):
+        from ..core.schedule import occurrence_this_week, refresh_auto_schedules
         from ..core.sync import sync_from_bangumi
 
         db = self._plugin.db
@@ -98,17 +97,15 @@ class UpdateScheduler:
             )
             total, added, updated, removed, progress_diffs = 0, 0, 0, 0, []
 
-        # 新增的云端收藏和升级后的存量记录只会在这里补齐一次；手动排期不受影响。
+        # 每轮检查都用 Tenrai 搜索结果刷新启用提醒的自动信息：自动排期可更新，
+        # 手动排期只同步 airing 生命周期，不会被改写。
         try:
-            if refresh_schedules:
-                resolved = await refresh_auto_schedules(db, self._plugin.plugin_config)
-            else:
-                resolved = await resolve_missing_schedules(db, self._plugin.plugin_config)
+            resolved = await refresh_auto_schedules(db, self._plugin.plugin_config)
             if resolved:
                 success = sum(result.found for result in resolved)
-                logger.info("[排期] 已查询 %s 条，成功 %s 条", len(resolved), success)
+                logger.info("[排期] 已刷新 %s 条启用提醒，成功 %s 条", len(resolved), success)
         except Exception as e:
-            logger.warning("补齐 Tenrai 排期失败（不影响本轮检查）：%s", e)
+            logger.warning("刷新 Tenrai 排期失败（不影响本轮检查）：%s", e)
 
         # Step B: 对进度领先的条目自动触发访谈
         interview_count = 0
@@ -162,9 +159,9 @@ class UpdateScheduler:
 
         logger.info(f"[Step B] 自动访谈: 触发了 {interview_count} 个会话")
 
-        # Step C: 只按北京时间的播出排期提醒，不再查询 Bangumi 分集。
+        # Step C: 按北京时间排期判断提醒时机，再以 Bangumi 正片发布日期确认集数。
         subs = await db.get_active_scheduled_subscriptions()
-        updated_subs = []
+        candidates = []
         now = datetime.now(SHANGHAI)
         last_check = await self._last_check_in_shanghai(db)
         interval = max(float(self._plugin.plugin_config.check_interval_hours), 0.01)
@@ -180,16 +177,21 @@ class UpdateScheduler:
                     continue
                 marker = occurrence.isoformat()
                 if last_check <= occurrence <= now and sub.last_schedule_notified_at != marker:
-                    await db.update_last_schedule_notified(sub.subject_id, marker)
-                    updated_subs.append(sub)
+                    candidates.append((sub, occurrence, marker))
+
+        notifications = []
+        if candidates and umo:
+            notifications = await self._resolve_notification_episodes(candidates)
 
         logger.info(
             f"[Step C] 排期检查: 扫描了 {len(subs)} 个有效排期, "
-            f"触发 {len(updated_subs)} 条提醒"
+            f"触发 {len(notifications)} 条提醒"
         )
 
-        if updated_subs and umo:
-            await self._send_notifications(umo, updated_subs)
+        if notifications and umo:
+            if await self._send_notifications(umo, notifications):
+                for sub, _episode, marker in notifications:
+                    await db.update_last_schedule_notified(sub.subject_id, marker)
 
         # 更新检查时间
         now_utc = now.astimezone(timezone.utc).isoformat()
@@ -200,6 +202,35 @@ class UpdateScheduler:
         )
         logger.info("=" * 40)
         return resolved if 'resolved' in locals() else []
+
+    async def _resolve_notification_episodes(self, candidates: list[tuple]):
+        """用 Bangumi 分集发布日期确认每个排期对应的正片集数。
+
+        无法查询或无法确认时不写提醒标记，因此不会发送没有集数的通知，也不会
+        误把这一次排期视为已处理。
+        """
+        client = BangumiClient(self._plugin.plugin_config)
+        notifications = []
+        try:
+            for sub, occurrence, marker in candidates:
+                try:
+                    episodes = await client.get_episodes(sub.subject_id)
+                    episode = main_episode_number_for_airdate(
+                        episodes, occurrence.date().isoformat(),
+                    )
+                except Exception as exc:
+                    logger.warning("查询 Bangumi 分集失败，跳过提醒（%s）：%s", sub.subject_id, exc)
+                    continue
+                if episode is None:
+                    logger.info(
+                        "无法确认排期对应的 Bangumi 正片集数，跳过提醒（%s，%s）",
+                        sub.subject_id, occurrence.date().isoformat(),
+                    )
+                    continue
+                notifications.append((sub, episode, marker))
+        finally:
+            await client.close()
+        return notifications
 
     async def _last_check_in_shanghai(self, db) -> datetime | None:
         value = await db.get_task_state("last_check_time")
@@ -214,22 +245,15 @@ class UpdateScheduler:
             logger.warning("忽略无法解析的 last_check_time：%r", value)
             return None
 
-    async def _send_notifications(self, umo: str, updated: list):
-        lines = ["【番剧预计更新提醒】"]
-        weekday_names = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
-        for sub in updated:
-            name = sub.subject_name_cn or sub.subject_name
-            lines.append(f"{name}")
-            lines.append(
-                f"预计更新（北京时间每周{weekday_names[sub.schedule_weekday]} {sub.schedule_time}）"
-            )
-            lines.append("")
-        msg = "\n".join(lines).strip()
+    async def _send_notifications(self, umo: str, updated: list[tuple]) -> bool:
+        msg = format_update_notifications(updated)
         chain = MessageChain().message(msg)
         try:
             await self._plugin.context.send_message(umo, chain)
+            return True
         except Exception as e:
             logger.error(f"发送通知失败: {e}")
+            return False
 
     async def stop(self):
         self._running = False
