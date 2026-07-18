@@ -53,6 +53,18 @@ class CollectionItem:
     subject_name_cn: str
     eps: int
     ep_status: int
+    images: Optional[dict] = None
+
+
+def select_cover_url(images: Optional[dict]) -> Optional[str]:
+    """按列表卡需要的清晰度顺序选择 Bangumi 封面地址。"""
+    if not isinstance(images, dict):
+        return None
+    for size in ("large", "common", "medium"):
+        value = images.get(size)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
 
 
 class BangumiClient:
@@ -245,6 +257,7 @@ class BangumiClient:
                     subject_name_cn=subject.get("name_cn", ""),
                     eps=subject.get("eps", 0) or 0,
                     ep_status=item.get("ep_status", 0),
+                    images=subject.get("images"),
                 ))
             total = data.get("total", 0)
             offset += limit

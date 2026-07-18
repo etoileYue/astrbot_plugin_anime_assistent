@@ -1,7 +1,10 @@
 from pathlib import Path
+
+import httpx
+import astrbot.api.message_components as Comp
+from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star, register
-from astrbot.api import logger, AstrBotConfig
 from astrbot.core.utils.astrbot_path import get_astrbot_data_path
 
 from .core.config import PluginConfig
@@ -19,6 +22,7 @@ from .core.web_editor import WebEditor
 from .handlers.interview import InterviewHandler
 from .handlers.progress import ProgressHandler
 from .handlers.subscription import SubscriptionHandler
+from .rendering.subscription_list import ImageLoader, SubscriptionListRenderer
 from .storage.database import Database
 
 
@@ -37,12 +41,33 @@ class BangumiPlugin(Star):
         self.scheduler = UpdateScheduler(self, interview_handler=self.interview_handler)
         self.web_viewer: WebViewer | None = None
         self.web_editor: WebEditor | None = None
+        self.image_client: httpx.AsyncClient | None = None
+        self.subscription_renderer: SubscriptionListRenderer | None = None
         self._pending_confirms: dict[str, dict] = {}
         self._cmd_words = {"sync", "search", "sub", "notes", "bangumi"}
 
     async def initialize(self):
         self._data_path = str(Path(get_astrbot_data_path()) / "plugin_data" / self.name)
         await self.db.initialize(self._data_path)
+
+        # 列表卡共享一个异步图片客户端；字体或客户端初始化失败不影响纯文本功能。
+        try:
+            self.image_client = httpx.AsyncClient(
+                timeout=10.0,
+                proxy=self.plugin_config.bangumi_proxy or None,
+                follow_redirects=True,
+                headers={"User-Agent": "etoile_yue/BangumiBot image-card"},
+            )
+            self.subscription_renderer = SubscriptionListRenderer(
+                ImageLoader(self.image_client, max_concurrency=6),
+                font_path=self.plugin_config.card_font_path,
+            )
+        except Exception as e:
+            logger.warning(f"追番列表图片服务初始化失败，将使用纯文本：{e}")
+            if self.image_client:
+                await self.image_client.aclose()
+            self.image_client = None
+            self.subscription_renderer = None
 
         # Web 笔记查看器
         self.web_viewer = WebViewer(
@@ -199,8 +224,28 @@ class BangumiPlugin(Star):
         """查看追番列表。用法：/sub list"""
         self._ensure_umo(event)
         handler = SubscriptionHandler(self.db, self.plugin_config)
-        result = await handler.list_subscriptions()
-        yield event.plain_result(result)
+        items = await handler.get_subscription_items()
+        text_result = handler.format_subscriptions_text(items)
+        if not items:
+            yield event.plain_result(text_result)
+            return
+
+        pages = None
+        if self.subscription_renderer:
+            try:
+                pages = await self.subscription_renderer.render_pages(items)
+            except Exception as e:
+                logger.warning(f"追番列表图片生成失败，将使用纯文本：{e}")
+        if pages:
+            yield event.chain_result([Comp.Image.fromBase64(page) for page in pages])
+        else:
+            reason = (
+                self.subscription_renderer.last_failure_reason
+                if self.subscription_renderer
+                else "图片渲染器未初始化"
+            )
+            logger.warning(f"/sub list 图片不可用，已回退纯文本：{reason or '未知原因'}")
+            yield event.plain_result(text_result)
 
     @sub_group.command("remove")
     async def cmd_sub_remove(self, event: AstrMessageEvent, subject_id: int):
@@ -484,6 +529,11 @@ class BangumiPlugin(Star):
                 await self.web_editor.stop()
             except Exception as e:
                 logger.warning(f"停止 web_editor 失败: {e}")
+        if self.image_client:
+            try:
+                await self.image_client.aclose()
+            except Exception as e:
+                logger.warning(f"关闭追番列表图片客户端失败: {e}")
         try:
             await self.db.close()
         except Exception as e:

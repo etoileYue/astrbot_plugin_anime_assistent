@@ -49,5 +49,10 @@ class PluginConfig:
         """HTTP 代理地址，留空表示不使用代理。"""
         return str(self._config.get("bangumi_proxy", "http://mihomo:7890") or "").strip()
 
+    @property
+    def card_font_path(self) -> str:
+        """追番列表卡使用的可选 CJK 字体路径。"""
+        return str(self._config.get("card_font_path", "") or "").strip()
+
     def save(self):
         self._config.save_config()

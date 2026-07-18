@@ -15,6 +15,7 @@ class Subscription:
     last_notified_ep: int = 0
     watched_eps: int = 0
     airing: int = 1
+    cover_url: Optional[str] = None
     mal_id: Optional[int] = None
     schedule_weekday: Optional[int] = None
     schedule_time: str = ""

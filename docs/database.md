@@ -27,6 +27,7 @@ CREATE TABLE subscriptions (
     last_notified_ep INTEGER DEFAULT 0,        -- 最后一次通知的集数
     watched_eps INTEGER DEFAULT 0,             -- 已看集数（来源：Bangumi ep_status）
     airing      INTEGER DEFAULT 1,             -- Tenrai 确认仍在连载=1；已完结、提醒自动停用=0
+    cover_url   TEXT,                          -- 列表卡封面 URL 缓存（可空）
     mal_id      INTEGER,                       -- Tenrai 严格匹配后的 MAL 条目 ID
     schedule_weekday INTEGER,                  -- 北京时间星期，周一=0 至周日=6
     schedule_time TEXT,                        -- 北京时间 HH:MM
@@ -46,6 +47,7 @@ CREATE TABLE subscriptions (
 - `last_notified_ep` 仅为兼容已有数据保留，不参与更新提醒判断。
 - `watched_eps` 记录已看集数，来源为 Bangumi API 返回的 `ep_status` 字段。插件初始化时自动同步，进度消息同步时也会更新。
 - `subject_name` 是本地缓存，避免每次显示时都调 API。
+- `cover_url` 只缓存 Bangumi `images` 中按 `large → common → medium` 选出的 URL，不把图片二进制写入 SQLite。添加和收藏同步会刷新非空 URL；响应缺图时保留已有缓存。旧记录首次查看列表时按最多 4 个并发请求补齐，单项失败不影响其他条目。
 - `status` 值与 Bangumi 收藏类型一致。
 - 插件初始化时自动从 Bangumi 同步「在看」列表，也可通过 `/sub sync` 手动同步。
 
@@ -116,6 +118,7 @@ CREATE TABLE task_state (
 │ id (PK)          │   ┌──│ subject_id   │
 │ subject_id (UNQ) │◀──┤  │ alias        │
 │ subject_name     │   │  └─────────────┘
+│ cover_url        │   │
 │ status           │   │
 │ total_eps        │   │  ┌─────────────┐
 │ last_notified_ep │   │  │  watch_log  │

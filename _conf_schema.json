@@ -36,5 +36,11 @@
     "type": "string",
     "default": "http://mihomo:7890",
     "hint": "留空则不使用代理。例：http://127.0.0.1:7890 或 http://mihomo:7890"
+  },
+  "card_font_path": {
+    "description": "追番列表卡 CJK 字体路径",
+    "type": "string",
+    "default": "",
+    "hint": "可选。留空时使用插件内置字体，并兼容寻找 Noto/Droid CJK 系统字体"
   }
 }

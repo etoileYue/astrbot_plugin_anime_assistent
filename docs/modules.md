@@ -34,6 +34,12 @@ astrbot_plugin_bangumi_assistent/
 │   ├── models.py              # 数据模型定义
 │   └── markdown.py            # Markdown 文件读写
 │
+├── rendering/                 # Pillow 图片渲染
+│   ├── __init__.py
+│   └── subscription_list.py   # 粉彩追番列表分页卡与安全封面下载
+│
+├── assets/fonts/              # Docker 可用的内置 CJK/Latin 字体及许可证
+│
 └── handlers/                  # 消息/事件处理器
     ├── __init__.py
     ├── progress.py            # 处理"芙莉莲15看完"类消息
@@ -48,6 +54,7 @@ astrbot_plugin_bangumi_assistent/
 - 继承 `Star` 类
 - 注册所有命令和事件处理器
 - 初始化调度器
+- 初始化并关闭追番列表卡共享 `httpx.AsyncClient` 与渲染器
 - 负责将消息路由到对应的 handler
 
 **依赖**：所有 handler 模块
@@ -137,6 +144,16 @@ astrbot_plugin_bangumi_assistent/
 
 **依赖**：无
 
+### rendering/subscription_list.py — 追番列表卡
+
+- 使用 Pillow 将结构化订阅数据渲染为 1600px 宽的粉彩分页 PNG，每页最多 6 部
+- 使用共享异步 `httpx` 客户端下载封面，限制协议、超时、大小和并发
+- 将图片解码和 Pillow 绘制放入工作线程，避免阻塞事件循环
+- 封面失败时生成首字占位图；页面失败时用全占位封面重试，再失败返回 `None` 交给命令层降级纯文本
+- 字体优先级为可选 `card_font_path` → 插件内置 Droid CJK/DejaVu Sans → 常见系统字体；数字/拉丁字符分段回退，最终没有中文字体时禁用图片结果
+
+**依赖**：`httpx`, `Pillow`, `storage/models.py`
+
 ### handlers/progress.py — 进度同步处理器
 
 - 解析用户消息（提取番剧名和集数）
@@ -149,6 +166,7 @@ astrbot_plugin_bangumi_assistent/
 ### handlers/subscription.py — 追番管理处理器
 
 - 追番列表的查询、添加、删除
+- 提供结构化列表与独立的完整纯文本格式化方法，并以最多 4 个并发 API 请求补齐旧记录封面 URL
 - 别名管理
 
 **依赖**：`api/bangumi.py`, `storage/database.py`

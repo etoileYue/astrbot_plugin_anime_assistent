@@ -1,10 +1,12 @@
 """追番管理处理器 — /sub add|list|remove 命令实现。"""
 
+import asyncio
 import logging
 
-from ..api.bangumi import BangumiClient, CollectionType, Subject
+from ..api.bangumi import BangumiClient, CollectionType, Subject, select_cover_url
 from ..core.schedule import WEEKDAY_NAMES, resolve_schedule
 from ..storage.database import Database
+from ..storage.models import Subscription
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +26,7 @@ class SubscriptionHandler:
             subject_name=subject.name,
             subject_name_cn=subject.name_cn,
             total_eps=subject.eps,
+            cover_url=select_cover_url(subject.images),
         )
         if subject.name_cn:
             await self._db.add_alias(subject.id, subject.name_cn)
@@ -61,13 +64,14 @@ class SubscriptionHandler:
         return msg
 
     async def add_subscription(self, subject_id: int) -> str:
+        client = BangumiClient(self._config)
         try:
-            client = BangumiClient(self._config)
             subject = await client.get_subject(subject_id)
-            await client.close()
         except Exception as e:
             logger.error(f"获取番剧信息失败: {e}")
             return f"获取番剧信息失败：{e}"
+        finally:
+            await client.close()
 
         return await self._do_add(subject, str(subject_id))
 
@@ -110,8 +114,43 @@ class SubscriptionHandler:
         """用户确认后执行添加。"""
         return await self._do_add(subject, user_input)
 
-    async def list_subscriptions(self) -> str:
+    async def get_subscription_items(self) -> list[Subscription]:
+        """返回保持数据库排序的结构化列表，并补齐旧记录的封面 URL。"""
         subs = await self._db.list_subscriptions()
+        missing = [sub for sub in subs if not sub.cover_url]
+        if not missing:
+            return subs
+
+        client = BangumiClient(self._config)
+        semaphore = asyncio.Semaphore(4)
+
+        async def fetch_cover(sub: Subscription) -> tuple[Subscription, str | None]:
+            try:
+                async with semaphore:
+                    subject = await client.get_subject(sub.subject_id)
+                return sub, select_cover_url(subject.images)
+            except Exception as e:
+                logger.warning(
+                    "补齐追番封面失败 (subject_id=%s): %s: %s",
+                    sub.subject_id,
+                    e.__class__.__name__,
+                    e,
+                )
+                return sub, None
+
+        try:
+            results = await asyncio.gather(*(fetch_cover(sub) for sub in missing))
+            for sub, cover_url in results:
+                if cover_url:
+                    await self._db.update_cover_url(sub.subject_id, cover_url)
+                    sub.cover_url = cover_url
+        finally:
+            await client.close()
+        return subs
+
+    @staticmethod
+    def format_subscriptions_text(subs: list[Subscription]) -> str:
+        """生成完整纯文本列表，供常规接口与图片失败降级共享。"""
         if not subs:
             return "追番列表为空。使用 /sub add <id | 番剧名称> 添加追番。"
         lines = ["当前追番列表："]
@@ -133,6 +172,10 @@ class SubscriptionHandler:
                 schedule = ""
             lines.append(f"  {marker}[{sub.subject_id}] {name} — {status} ({eps}){schedule}")
         return "\n".join(lines)
+
+    async def list_subscriptions(self) -> str:
+        """兼容原有调用：补齐数据后返回纯文本列表。"""
+        return self.format_subscriptions_text(await self.get_subscription_items())
 
     async def remove_subscription(self, subject_id: int) -> str:
         sub = await self._db.get_subscription(subject_id)

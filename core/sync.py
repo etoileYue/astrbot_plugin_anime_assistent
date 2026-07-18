@@ -3,7 +3,7 @@
 import asyncio
 import logging
 
-from ..api.bangumi import BangumiClient, CollectionType
+from ..api.bangumi import BangumiClient, CollectionType, select_cover_url
 from ..storage.database import Database
 
 logger = logging.getLogger(__name__)
@@ -39,18 +39,21 @@ async def sync_from_bangumi(db: Database, config) -> tuple[int, int, int, int, l
             old_eps = old_watched.get(item.subject_id, 0)
             # 更新提醒由 Tenrai 排期决定；不再通过 Bangumi 分集接口推断连载状态。
             airing = 1
+            cover_url = select_cover_url(item.images)
 
             await db.conn.execute(
                 """INSERT INTO subscriptions
-                   (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps, airing)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps, airing, cover_url)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(subject_id) DO UPDATE SET
                    subject_name = excluded.subject_name,
                    subject_name_cn = excluded.subject_name_cn,
                    total_eps = excluded.total_eps,
                    status = excluded.status,
-                   watched_eps = excluded.watched_eps""",
-                (item.subject_id, item.subject_name, item.subject_name_cn, item.eps, 3, item.ep_status, airing),
+                   watched_eps = excluded.watched_eps,
+                   cover_url = COALESCE(NULLIF(excluded.cover_url, ''), subscriptions.cover_url)""",
+                (item.subject_id, item.subject_name, item.subject_name_cn, item.eps,
+                 3, item.ep_status, airing, cover_url),
             )
 
             if is_new:

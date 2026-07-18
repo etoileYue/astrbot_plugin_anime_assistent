@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     last_notified_ep INTEGER DEFAULT 0,
     watched_eps INTEGER DEFAULT 0,
     airing      INTEGER DEFAULT 1,
+    cover_url   TEXT,
     mal_id      INTEGER,
     schedule_weekday INTEGER,
     schedule_time TEXT,
@@ -81,6 +82,7 @@ class Database:
         for column, definition in (
             ("watched_eps", "INTEGER DEFAULT 0"),
             ("airing", "INTEGER DEFAULT 1"),
+            ("cover_url", "TEXT"),
             ("mal_id", "INTEGER"),
             ("schedule_weekday", "INTEGER"),
             ("schedule_time", "TEXT"),
@@ -120,26 +122,28 @@ class Database:
         self, subject_id: int, subject_name: str,
         subject_name_cn: str = "", total_eps: int = 0, status: int = 3,
         watched_eps: int = 0, airing: int = 1,
+        cover_url: str | None = None,
     ) -> Subscription:
         await self.conn.execute(
             """INSERT INTO subscriptions
-               (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps, airing)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
+               (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps, airing, cover_url)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT(subject_id) DO UPDATE SET
                subject_name = excluded.subject_name,
                subject_name_cn = excluded.subject_name_cn,
                total_eps = excluded.total_eps,
                status = excluded.status,
                watched_eps = excluded.watched_eps,
-               airing = excluded.airing""",
-            (subject_id, subject_name, subject_name_cn, total_eps, status, watched_eps, airing),
+               airing = excluded.airing,
+               cover_url = COALESCE(NULLIF(excluded.cover_url, ''), subscriptions.cover_url)""",
+            (subject_id, subject_name, subject_name_cn, total_eps, status,
+             watched_eps, airing, cover_url),
         )
         await self.conn.commit()
-        return Subscription(
-            subject_id=subject_id, subject_name=subject_name,
-            subject_name_cn=subject_name_cn, total_eps=total_eps, status=status,
-            watched_eps=watched_eps, airing=airing,
-        )
+        subscription = await self.get_subscription(subject_id)
+        if subscription is None:  # INSERT/UPSERT 成功后不应发生，保留明确故障语义。
+            raise RuntimeError(f"failed to read subscription {subject_id} after upsert")
+        return subscription
 
     async def remove_subscription(self, subject_id: int):
         await self.conn.execute(
@@ -157,6 +161,7 @@ class Database:
             total_eps=r["total_eps"] or 0, last_notified_ep=r["last_notified_ep"] or 0,
             watched_eps=r["watched_eps"] or 0,
             airing=r["airing"] if r["airing"] is not None else 1,
+            cover_url=r["cover_url"] or None,
             mal_id=r["mal_id"], schedule_weekday=r["schedule_weekday"],
             schedule_time=r["schedule_time"] or "",
             schedule_timezone=r["schedule_timezone"] or "",
@@ -288,6 +293,16 @@ class Database:
         await self.conn.execute(
             "UPDATE subscriptions SET airing = ? WHERE subject_id = ?",
             (airing, subject_id),
+        )
+        await self.conn.commit()
+
+    async def update_cover_url(self, subject_id: int, cover_url: str | None):
+        """仅用非空地址更新封面缓存，避免上游缺字段清空已有值。"""
+        if not cover_url or not cover_url.strip():
+            return
+        await self.conn.execute(
+            "UPDATE subscriptions SET cover_url = ? WHERE subject_id = ?",
+            (cover_url.strip(), subject_id),
         )
         await self.conn.commit()
 
