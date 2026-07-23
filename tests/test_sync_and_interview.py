@@ -128,8 +128,14 @@ async def test_initial_message_is_fixed_and_follow_up_uses_comments(monkeypatch)
 
     engine._history = [("首问", "这是我的自主总结")]
     await engine._generate_follow_up("这是我的自主总结", "umo")
-    assert "评论内容" in calls[0][0]
-    assert calls[0][1] == [
+    prompt, context = calls[0]
+    # 追问提示本身必须包含回答，不能只依赖 AstrBot provider 是否传递 context。
+    assert "这是我的自主总结" in prompt
+    assert "追问阶段" in prompt
+    assert "绝不能重新询问整体感受" in prompt
+    assert "评论内容" in prompt
+    assert "最新用户回答开始" in prompt
+    assert context == [
         {"role": "assistant", "content": "首问"},
         {"role": "user", "content": "这是我的自主总结"},
     ]
