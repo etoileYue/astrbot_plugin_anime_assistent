@@ -97,7 +97,7 @@ async def resolve_schedule(
     except Exception as exc:
         logger.warning("Tenrai 排期查询失败（%s）：%s", sub.subject_id, exc)
         await db.record_schedule_check(sub.subject_id)
-        return ScheduleResolution(False, "Tenrai 查询失败，请稍后用 /sub schedule auto 重试或手动设置")
+        return ScheduleResolution(False, "Tenrai 查询失败，将在后续同步时重试；也可手动设置提醒时间")
     finally:
         if owned_client:
             await client.close()

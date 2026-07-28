@@ -11,10 +11,8 @@ from .core.config import PluginConfig
 from .core.scheduler import UpdateScheduler
 from .core.schedule import (
     WEEKDAY_INPUTS,
-    WEEKDAY_NAMES,
     handled_marker_for_new_schedule,
     resolve_missing_schedules,
-    resolve_schedule,
     valid_time,
 )
 from .core.web_viewer import WebViewer
@@ -120,9 +118,6 @@ class BangumiPlugin(Star):
             "  /sub list            查看追番列表",
             "  /sub remove <subject_id>  移除追番",
             "  /sub schedule <番剧标识> <周一-周日> <HH:MM>  手动设置时间提醒",
-            "  /sub schedule show <番剧标识>  查看排期",
-            "  /sub schedule clear <番剧标识>  关闭更新提醒",
-            "  /sub schedule auto <番剧标识>  重新从 MAL 获取排期",
             "  /sync                同步 Bangumi 数据并检查番剧更新",
             "  /note <标识> <集数>  手动触发观感访谈",
             "  /notes list          查看观感记录",
@@ -265,75 +260,22 @@ class BangumiPlugin(Star):
 
     @sub_group.command("schedule")
     async def cmd_sub_schedule(
-        self, event: AstrMessageEvent, operation_or_identifier: str = "",
-        identifier_or_day: str = "", clock: str = "",
+        self, event: AstrMessageEvent, identifier: str = "", day: str = "", clock: str = "",
     ):
-        """设置、查看或刷新北京时间更新排期。"""
+        """手动设置北京时间更新提醒。"""
         self._ensure_umo(event)
         usage = (
             "用法：\n"
             "/sub schedule <番剧标识> <周一-周日> <HH:MM>\n"
-            "/sub schedule show|clear|auto <番剧标识>\n"
             "所有时间均为北京时间（UTC+8）。"
         )
-        operation_or_identifier = operation_or_identifier.strip()
-        identifier_or_day = identifier_or_day.strip()
+        identifier = identifier.strip()
+        day = day.strip()
         clock = clock.strip()
-        if not operation_or_identifier:
+        if not identifier or not day or not clock:
             yield event.plain_result(usage)
             return
 
-        # AstrBot 会按函数的显式位置参数绑定子命令参数；不要使用 *args/
-        # 一个聚合字符串，否则在 command_group 下尾随文本可能不会被传入。
-        action = operation_or_identifier
-        if action in {"show", "clear", "auto"}:
-            identifier = identifier_or_day
-            if not identifier:
-                yield event.plain_result(usage)
-                return
-            sub = await self._find_subscription(identifier)
-            if not sub:
-                yield event.plain_result(f"未找到「{identifier}」的追番记录。")
-                return
-            name = sub.subject_name_cn or sub.subject_name
-            if action == "show":
-                if not sub.airing and sub.schedule_weekday is not None and sub.schedule_time:
-                    yield event.plain_result(f"《{name}》未启用更新提醒。")
-                elif not sub.airing and sub.schedule_source != "manual":
-                    yield event.plain_result(f"《{name}》未启用更新提醒。")
-                elif sub.schedule_weekday is not None and sub.schedule_time:
-                    source = "MAL 自动匹配" if sub.schedule_source == "mal" else "手动设置"
-                    yield event.plain_result(
-                        f"《{name}》的更新提醒：每周{WEEKDAY_NAMES[sub.schedule_weekday]} "
-                        f"{sub.schedule_time}（{source}）。"
-                    )
-                elif sub.schedule_source == "manual":
-                    yield event.plain_result(f"《{name}》的更新提醒已关闭。")
-                else:
-                    yield event.plain_result(f"《{name}》尚未设置有效排期；可手动设置或执行 /sub schedule auto {sub.subject_id}。")
-                return
-            if action == "clear":
-                await self.db.set_schedule(
-                    sub.subject_id, weekday=None, time=None, source="manual",
-                    mal_id=sub.mal_id, last_notified_at=None, airing=0,
-                )
-                yield event.plain_result(f"已关闭《{name}》的自动更新提醒。")
-                return
-
-            result = await resolve_schedule(self.db, sub, self.plugin_config)
-            if result.found:
-                yield event.plain_result(f"《{name}》{result.message}。")
-            else:
-                yield event.plain_result(
-                    f"《{name}》未能恢复自动排期：{result.message}。"
-                    "可改用手动设置。"
-                )
-            return
-
-        identifier, day = operation_or_identifier, identifier_or_day
-        if not day or not clock:
-            yield event.plain_result(usage)
-            return
         if day not in WEEKDAY_INPUTS:
             yield event.plain_result("星期必须是周一、周二、周三、周四、周五、周六或周日。")
             return

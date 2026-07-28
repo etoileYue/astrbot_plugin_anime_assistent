@@ -29,7 +29,6 @@
 | `/sub list` | 查看追番列表 |
 | `/sub remove <id>` | 移除追番 |
 | `/sub schedule <标识> <周一-周日> <HH:MM>` | 手动设置北京时间提醒 |
-| `/sub schedule show\|clear\|auto <标识>` | 查看、关闭或重新自动匹配排期 |
 | `/sync` | 同步 Bangumi、检查提醒并刷新自动排期 |
 | `/note <标识> <集数>` | 手动触发观感访谈 |
 | `/notes list` | 查看观感记录 |
