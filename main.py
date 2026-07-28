@@ -21,6 +21,7 @@ from .handlers.interview import InterviewHandler
 from .handlers.progress import ProgressHandler
 from .handlers.subscription import SubscriptionHandler
 from .rendering.subscription_list import ImageLoader, SubscriptionListRenderer
+from .rendering.subject_card import SubjectCardRenderer, format_subject_text
 from .storage.database import Database
 
 
@@ -40,9 +41,11 @@ class BangumiPlugin(Star):
         self.web_viewer: WebViewer | None = None
         self.web_editor: WebEditor | None = None
         self.image_client: httpx.AsyncClient | None = None
+        self.image_loader: ImageLoader | None = None
         self.subscription_renderer: SubscriptionListRenderer | None = None
+        self.subject_renderer: SubjectCardRenderer | None = None
         self._pending_confirms: dict[str, dict] = {}
-        self._cmd_words = {"sync", "search", "sub", "notes", "bangumi"}
+        self._cmd_words = {"sync", "search", "sub", "notes", "bangumi", "bgm"}
 
     async def initialize(self):
         self._data_path = str(Path(get_astrbot_data_path()) / "plugin_data" / self.name)
@@ -56,8 +59,13 @@ class BangumiPlugin(Star):
                 follow_redirects=True,
                 headers={"User-Agent": "etoile_yue/BangumiBot image-card"},
             )
+            self.image_loader = ImageLoader(self.image_client, max_concurrency=6)
             self.subscription_renderer = SubscriptionListRenderer(
-                ImageLoader(self.image_client, max_concurrency=6),
+                self.image_loader,
+                font_path=self.plugin_config.card_font_path,
+            )
+            self.subject_renderer = SubjectCardRenderer(
+                self.image_loader,
                 font_path=self.plugin_config.card_font_path,
             )
         except Exception as e:
@@ -65,7 +73,9 @@ class BangumiPlugin(Star):
             if self.image_client:
                 await self.image_client.aclose()
             self.image_client = None
+            self.image_loader = None
             self.subscription_renderer = None
+            self.subject_renderer = None
 
         # Web 笔记查看器
         self.web_viewer = WebViewer(
@@ -114,6 +124,7 @@ class BangumiPlugin(Star):
             "BangumiBot 可用命令：",
             "",
             "  /search <关键词>    搜索 Bangumi 番剧",
+            "  /bgm <subject_id>  查看 Bangumi 条目详情卡",
             "  /sub add <番剧名称>  添加追番",
             "  /sub list            查看追番列表",
             "  /sub remove <subject_id>  移除追番",
@@ -153,6 +164,50 @@ class BangumiPlugin(Star):
             eps = f"{sub.eps}集" if sub.eps else "集数未知"
             lines.append(f"{i+1}. [{sub.id}] {name} ({eps})")
         yield event.plain_result("\n".join(lines))
+
+    @filter.command("bgm")
+    async def cmd_bgm(self, event: AstrMessageEvent, subject_id: str = ""):
+        """查询 Bangumi 条目详情。用法：/bgm <subject_id>"""
+        self._ensure_umo(event)
+        raw_subject_id = subject_id.strip()
+        if not raw_subject_id or not raw_subject_id.isdigit() or int(raw_subject_id) <= 0:
+            yield event.plain_result("用法：/bgm <subject_id>\n例如：/bgm 400602")
+            return
+
+        from .api.bangumi import BangumiClient
+
+        client = BangumiClient(self.plugin_config)
+        try:
+            subject = await client.get_subject(int(raw_subject_id))
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            if status_code == 404:
+                message = f"未找到 subject_id 为 {raw_subject_id} 的 Bangumi 条目，或当前账号无权查看。"
+            elif status_code == 401:
+                message = "Bangumi Access Token 无效或已被撤销，请更新插件配置后重试。"
+            else:
+                message = f"查询 Bangumi 条目失败（HTTP {status_code}），请稍后重试。"
+            yield event.plain_result(message)
+            return
+        except httpx.RequestError:
+            yield event.plain_result("连接 Bangumi API 失败，请检查网络或代理配置后重试。")
+            return
+        except Exception as exc:
+            logger.warning("/bgm 查询条目 %s 失败: %s", raw_subject_id, exc, exc_info=True)
+            yield event.plain_result("查询 Bangumi 条目时发生异常，请稍后重试。")
+            return
+        finally:
+            await client.close()
+
+        card = None
+        if self.subject_renderer:
+            card = await self.subject_renderer.render(subject)
+        if card:
+            yield event.chain_result([Comp.Image.fromBase64(card)])
+        else:
+            reason = self.subject_renderer.last_failure_reason if self.subject_renderer else "图片渲染器未初始化"
+            logger.warning("/bgm 图片不可用，已回退纯文本：%s", reason)
+            yield event.plain_result(format_subject_text(subject))
 
     # === 追番管理 ===
 
