@@ -5,6 +5,7 @@
 ## 功能
 
 - **番剧搜索** — `/search 芙莉莲` 搜索 Bangumi 条目
+- **条目详情** — `/bgm 400602` 查看 Bangumi 条目详情卡
 - **追番管理** — `/sub add|list|remove` 管理追番列表，可用 `/sub schedule` 管理提醒排期
 - **进度同步** — 发送"芙莉莲15看完"自动同步观看进度到 Bangumi
 - **更新提醒** — 根据 Tenrai/MAL 播出排期按北京时间推送“预计更新第 N 集”QQ 通知；完结后自动停用
@@ -13,11 +14,9 @@
 - **Web 笔记查看** — 浏览器访问只读笔记页面（端口 58080）
 - **Web 笔记编辑** — 独立的文件管理器 + Markdown 编辑器（端口 58081）
 
-## 安装
+## Bangumi Access Token 获取
 
-1. 将 `astrbot_plugin_bangumi/` 放入 AstrBot 的 `addons/` 目录
-2. 在 AstrBot WebUI 中启用插件
-3. 配置 Bangumi Access Token（从 https://next.bgm.tv/demo/access-token 获取）
+配置 Bangumi Access Token（从 https://next.bgm.tv/demo/access-token 获取）
 
 ## 命令
 
@@ -25,6 +24,7 @@
 |------|------|
 | `/bangumi` | 查看所有可用命令 |
 | `/search <关键词>` | 搜索 Bangumi 番剧 |
+| `/bgm <subject_id>` | 查看 Bangumi 条目详情卡 |
 | `/sub add <id>` | 添加追番 |
 | `/sub list` | 查看追番列表 |
 | `/sub remove <id>` | 移除追番 |

@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 
 import httpx
@@ -34,6 +34,11 @@ class Subject:
     rating: Optional[dict] = None
     images: Optional[dict] = None
     air_date: str = ""
+    subject_type: int = 0
+    platform: str = ""
+    total_episodes: int = 0
+    tags: list[dict] = field(default_factory=list)
+    infobox: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -184,6 +189,11 @@ class BangumiClient:
                 rating=item.get("rating"),
                 images=item.get("images"),
                 air_date=item.get("date", ""),
+                subject_type=item.get("type", 0) or 0,
+                platform=item.get("platform", "") or "",
+                total_episodes=item.get("total_episodes", 0) or 0,
+                tags=item.get("tags") if isinstance(item.get("tags"), list) else [],
+                infobox=item.get("infobox") if isinstance(item.get("infobox"), list) else [],
             ))
         return results
 
@@ -198,6 +208,11 @@ class BangumiClient:
             rating=data.get("rating"),
             images=data.get("images"),
             air_date=data.get("date", ""),
+            subject_type=data.get("type", 0) or 0,
+            platform=data.get("platform", "") or "",
+            total_episodes=data.get("total_episodes", 0) or 0,
+            tags=data.get("tags") if isinstance(data.get("tags"), list) else [],
+            infobox=data.get("infobox") if isinstance(data.get("infobox"), list) else [],
         )
 
     async def get_episodes(self, subject_id: int) -> list[Episode]:
