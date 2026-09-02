@@ -1,5 +1,6 @@
 """访谈处理器 — 管理访谈会话和消息路由。"""
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
@@ -31,6 +32,20 @@ class ManualStartResult:
     subject_name: str = ""
     subject_name_cn: str = ""
     error: str | None = None
+    status: str = "failed"
+    start_episode: int = 0
+    end_episode: int = 0
+
+
+@dataclass
+class InterviewStartResult:
+    """一次访谈启动请求的结果。"""
+
+    status: str
+    subject_id: int
+    start_episode: int
+    end_episode: int
+    question: str | None = None
 
 
 class InterviewHandler:
@@ -39,12 +54,14 @@ class InterviewHandler:
         self._db = db
         self._config = config
         self._scraper = None  # 延迟初始化，避免未安装 bs4 时崩溃
-        self._active_sessions: dict[tuple, InterviewEngine] = {}
+        # 每部番剧只允许一个活跃会话；章节范围由引擎自身维护。
+        self._active_sessions: dict[int, InterviewEngine] = {}
+        self._session_locks: dict[int, asyncio.Lock] = {}
 
     async def try_start(self, event, subject_id: int, episode: int,
                         subject_name: str, subject_name_cn: str = "",
-                        start_episode: int | None = None) -> str | None:
-        """进度同步后尝试发起访谈。返回初始问题或 None。"""
+                        start_episode: int | None = None) -> InterviewStartResult:
+        """进度同步后尝试发起或扩展访谈。"""
         return await self.try_start_auto(
             umo=event.unified_msg_origin,
             subject_id=subject_id,
@@ -56,32 +73,62 @@ class InterviewHandler:
 
     async def try_start_auto(self, umo: str, subject_id: int, episode: int,
                              subject_name: str, subject_name_cn: str = "",
-                             start_episode: int | None = None) -> str | None:
-        """自动触发访谈（无需 event 对象）。返回初始问题或 None。"""
-        if self._scraper is None:
-            try:
-                from ..scraper.bangumi import BangumiScraper
-                self._scraper = BangumiScraper(
-                    comment_limit=self._config.scraper_comment_limit,
-                    use_cn_mirror=self._config.use_cn_mirror,
-                    proxy=self._config.bangumi_proxy or None,
+                             start_episode: int | None = None) -> InterviewStartResult:
+        """自动触发访谈（无需 event 对象）。同番剧会话自动向最新进度扩展。"""
+        start_episode = start_episode or episode
+        lock = self._session_locks.setdefault(subject_id, asyncio.Lock())
+        async with lock:
+            existing = self._active_sessions.get(subject_id)
+            if existing is not None:
+                old_end_episode = existing.episode
+                if episode <= old_end_episode:
+                    return InterviewStartResult(
+                        status="unchanged",
+                        subject_id=subject_id,
+                        start_episode=existing.start_episode,
+                        end_episode=existing.episode,
+                    )
+
+                question = await existing.extend_to(episode, umo)
+                return InterviewStartResult(
+                    status="extended_pending" if question else "extended_active",
+                    subject_id=subject_id,
+                    start_episode=existing.start_episode,
+                    end_episode=existing.episode,
+                    question=question,
                 )
-            except ImportError:
-                logger.warning("beautifulsoup4 未安装，评论爬取不可用")
 
-        engine = InterviewEngine(
-            self._plugin, self._db, self._config,
-            subject_id=subject_id, episode=episode,
-            subject_name=subject_name, subject_name_cn=subject_name_cn,
-            scraper=self._scraper,
-            start_episode=start_episode,
-        )
-        question = await engine.start(umo)
-        if question is None:
-            return None
+            if self._scraper is None:
+                try:
+                    from ..scraper.bangumi import BangumiScraper
+                    self._scraper = BangumiScraper(
+                        comment_limit=self._config.scraper_comment_limit,
+                        use_cn_mirror=self._config.use_cn_mirror,
+                        proxy=self._config.bangumi_proxy or None,
+                    )
+                except ImportError:
+                    logger.warning("beautifulsoup4 未安装，评论爬取不可用")
 
-        self._active_sessions[(subject_id, engine.start_episode, episode)] = engine
-        return question
+            engine = InterviewEngine(
+                self._plugin, self._db, self._config,
+                subject_id=subject_id, episode=episode,
+                subject_name=subject_name, subject_name_cn=subject_name_cn,
+                scraper=self._scraper,
+                start_episode=start_episode,
+            )
+            question = await engine.start(umo)
+            if question is None:
+                return InterviewStartResult(
+                    status="failed", subject_id=subject_id,
+                    start_episode=start_episode, end_episode=episode,
+                )
+
+            self._active_sessions[subject_id] = engine
+            return InterviewStartResult(
+                status="started", subject_id=subject_id,
+                start_episode=engine.start_episode, end_episode=engine.episode,
+                question=question,
+            )
 
     async def start_manual(self, umo: str, identifier: str, episode: int) -> ManualStartResult:
         """手动触发访谈：解析标识符、获取番剧信息、开始访谈。
@@ -114,7 +161,7 @@ class InterviewHandler:
                 await client.close()
 
         # 发起访谈
-        question = await self.try_start_auto(
+        start_result = await self.try_start_auto(
             umo=umo,
             subject_id=subject_id,
             episode=episode,
@@ -122,17 +169,20 @@ class InterviewHandler:
             subject_name_cn=subject_name_cn,
         )
 
-        if question is None:
+        if start_result.status == "failed":
             name = subject_name_cn or subject_name
             return ManualStartResult(
                 error=f"无法为《{name}》第{episode}集生成访谈问题，请检查 LLM 配置。"
             )
 
         return ManualStartResult(
-            question=question,
+            question=start_result.question,
             subject_id=subject_id,
             subject_name=subject_name,
             subject_name_cn=subject_name_cn,
+            status=start_result.status,
+            start_episode=start_result.start_episode,
+            end_episode=start_result.end_episode,
         )
 
     async def handle_message(self, event) -> str | None:
@@ -145,7 +195,8 @@ class InterviewHandler:
         sessions = list(self._active_sessions.items())
 
         if len(sessions) == 1:
-            return await self._route_to(sessions[0], text, event.unified_msg_origin)
+            subject_id, engine = sessions[0]
+            return await self._route_to(subject_id, engine, text, event.unified_msg_origin)
 
         routing = self._parse_routing(text)
         if routing is None or not routing.answer:
@@ -155,33 +206,32 @@ class InterviewHandler:
         if subject_id is None:
             return f"没有找到「{routing.identifier}」的追番记录，请检查名称或使用 subject_id。"
 
-        key = (subject_id, routing.start_episode, routing.end_episode)
-        if key not in self._active_sessions:
-            for (sid, start_ep, end_ep), eng in self._active_sessions.items():
-                if sid == subject_id:
-                    return (
-                        f"《{eng.subject_name}》"
-                        f"{self._format_episode_range(routing.start_episode, routing.end_episode)}"
-                        "没有活跃的访谈。\n"
-                        f"当前活跃的是{self._format_episode_range(start_ep, end_ep)}。"
-                    )
+        engine = self._active_sessions.get(subject_id)
+        if engine is None:
             return f"没有找到 subject_id={subject_id} 的活跃访谈。"
 
-        for (sid, start_ep, end_ep), engine in sessions:
-            if (sid, start_ep, end_ep) == key:
-                return await self._route_to(
-                    ((sid, start_ep, end_ep), engine), routing.answer, event.unified_msg_origin
-                )
+        if (routing.start_episode, routing.end_episode) != (
+            engine.start_episode, engine.episode
+        ):
+            return (
+                f"《{engine.subject_name}》"
+                f"{self._format_episode_range(routing.start_episode, routing.end_episode)}"
+                "没有活跃的访谈。\n"
+                f"当前活跃的是{self._format_episode_range(engine.start_episode, engine.episode)}。"
+            )
+        return await self._route_to(subject_id, engine, routing.answer, event.unified_msg_origin)
 
-    async def _route_to(self, session_item, answer: str, umo: str) -> str | None:
-        (sid, start_ep, end_ep), engine = session_item
-        response = await engine.handle_answer(answer, umo)
-        if response is not None:
-            if engine.state == InterviewState.ENDED:
+    async def _route_to(self, subject_id: int, engine: InterviewEngine,
+                        answer: str, umo: str) -> str | None:
+        lock = self._session_locks.setdefault(subject_id, asyncio.Lock())
+        async with lock:
+            if self._active_sessions.get(subject_id) is not engine:
+                return None
+            response = await engine.handle_answer(answer, umo)
+            if response is not None and engine.state == InterviewState.ENDED:
                 await self._save_markdown(engine)
-                del self._active_sessions[(sid, start_ep, end_ep)]
+                self._active_sessions.pop(subject_id, None)
             return response
-        return None
 
     def _parse_routing(self, text: str) -> RoutingInfo | None:
         """解析 [番剧名或ID] 集数或范围：回复内容 格式。"""
@@ -208,9 +258,11 @@ class InterviewHandler:
 
     def _routing_help_prompt(self) -> str:
         lines = ["当前有多个活跃访谈，请使用以下格式指定要回复的番剧：", ""]
-        for (sid, start_ep, end_ep), engine in self._active_sessions.items():
+        for sid, engine in self._active_sessions.items():
             name = engine.subject_name
-            lines.append(f"  [{sid}] {self._format_episode_range(start_ep, end_ep)} — {name}")
+            lines.append(
+                f"  [{sid}] {self._format_episode_range(engine.start_episode, engine.episode)} — {name}"
+            )
         lines.append("")
         lines.append("格式：[番剧名或ID] 集数或范围：回复内容")
         lines.append("例如：[上伊那牡丹] 9：我觉得这集...")
@@ -244,12 +296,16 @@ class InterviewHandler:
         )
         logger.info(f"访谈记录已保存: {filepath}")
 
-    def get_routing_hint(self, exclude: tuple | None = None) -> str:
+    def get_routing_hint(self, exclude_subject_id: int | None = None) -> str:
         """如果存在多个活跃会话，返回路由前缀提示；否则返回空字符串。
 
-        exclude: 可选，排除某个 (subject_id, start_episode, end_episode)，用于只提示"其他"会话。
+        exclude_subject_id: 可选，排除某个番剧，用于只提示"其他"会话。
         """
-        sessions = [(k, e) for k, e in self._active_sessions.items() if k != exclude]
+        sessions = [
+            (sid, engine)
+            for sid, engine in self._active_sessions.items()
+            if sid != exclude_subject_id
+        ]
         if not sessions:
             return ""
         lines = [
@@ -257,9 +313,9 @@ class InterviewHandler:
             "📋 回复时请加上路由前缀，指定要回复的访谈：",
             "",
         ]
-        for (sid, start_ep, end_ep), engine in sessions:
+        for sid, engine in sessions:
             lines.append(
-                f"  [{sid}] {self._format_episode_range(start_ep, end_ep)} — {engine.subject_name}"
+                f"  [{sid}] {self._format_episode_range(engine.start_episode, engine.episode)} — {engine.subject_name}"
             )
         lines.append("")
         lines.append("格式：[番剧名或ID] 集数或范围：回复内容")
@@ -269,7 +325,12 @@ class InterviewHandler:
     def has_active_session(self, subject_id: int = 0, start_episode: int = 0,
                            end_episode: int = 0) -> bool:
         if subject_id and start_episode and end_episode:
-            return (subject_id, start_episode, end_episode) in self._active_sessions
+            engine = self._active_sessions.get(subject_id)
+            return bool(engine and (engine.start_episode, engine.episode) == (
+                start_episode, end_episode
+            ))
+        if subject_id:
+            return subject_id in self._active_sessions
         return len(self._active_sessions) > 0
 
     @staticmethod

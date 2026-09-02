@@ -365,6 +365,27 @@ class Database:
                          episode=episode, episode_start=episode_start,
                          question=question, answer=answer, round=round_num)
 
+    async def update_interview_range(self, interview_ids: list[int],
+                                     episode_start: int, episode: int):
+        """更新当前内存会话已写入记录的章节范围。"""
+        if not interview_ids:
+            return
+        placeholders = ", ".join("?" for _ in interview_ids)
+        await self.conn.execute(
+            f"UPDATE interviews SET episode_start = ?, episode = ? "
+            f"WHERE id IN ({placeholders})",
+            (episode_start, episode, *interview_ids),
+        )
+        await self.conn.commit()
+
+    async def update_interview_question(self, interview_id: int, question: str):
+        """替换尚未回答的首问文本。"""
+        await self.conn.execute(
+            "UPDATE interviews SET question = ? WHERE id = ?",
+            (question, interview_id),
+        )
+        await self.conn.commit()
+
     async def get_interviews(self, subject_id: int, episode: int) -> list[Interview]:
         rows = await self.conn.execute_fetchall(
             "SELECT * FROM interviews WHERE subject_id = ? AND episode = ? ORDER BY round",

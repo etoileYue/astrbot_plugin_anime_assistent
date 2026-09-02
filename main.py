@@ -407,14 +407,26 @@ class BangumiPlugin(Star):
             return
 
         name = result.subject_name_cn or result.subject_name
-        msg = (
-            f"来聊聊《{name}》第{episode}集吧！\n\n"
-            f"{result.question}\n\n"
-            f"（随时可以说\"不聊了\"结束访谈）"
+        episode_label = self.interview_handler._format_episode_range(
+            result.start_episode, result.end_episode
         )
-        hint = self.interview_handler.get_routing_hint(
-            exclude=(result.subject_id, episode, episode)
-        )
+        if result.status == "started":
+            msg = (
+                f"来聊聊《{name}》{episode_label}吧！\n\n"
+                f"{result.question}\n\n"
+                f"（随时可以说\"不聊了\"结束访谈）"
+            )
+        elif result.status == "extended_pending":
+            msg = (
+                f"已将《{name}》的访谈合并为{episode_label}。\n\n"
+                f"{result.question}\n\n"
+                f"（随时可以说\"不聊了\"结束访谈）"
+            )
+        elif result.status == "extended_active":
+            msg = f"已将《{name}》的活跃访谈扩展为{episode_label}，此前对话已保留。"
+        else:
+            msg = f"《{name}》{episode_label}已有活跃访谈，请继续回复即可。"
+        hint = self.interview_handler.get_routing_hint(result.subject_id)
         if hint:
             msg += "\n" + hint
         yield event.plain_result(msg)
@@ -442,11 +454,11 @@ class BangumiPlugin(Star):
         yield event.plain_result("\n".join(lines))
 
     # === 消息路由（非命令消息） ===
-    # 优先级：待确认 > 访谈会话 > 进度同步
+    # 优先级：待确认 > 进度同步 > 访谈会话
 
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def on_message(self, event: AstrMessageEvent):
-        """处理非命令消息：待确认 → 访谈会话 → 进度同步。"""
+        """处理非命令消息：待确认 → 进度同步 → 访谈会话。"""
         self._ensure_umo(event)
 
         # 跳过命令消息（AstrBot 可能将命令消息同时路由到 on_message，
@@ -479,35 +491,48 @@ class BangumiPlugin(Star):
                 )
             return
 
-        # 1. 检查是否有活跃的访谈会话
-        if self.interview_handler.has_active_session():
-            result = await self.interview_handler.handle_message(event)
-            if result:
-                yield event.plain_result(result)
-            return
-
-        # 2. 尝试进度同步
+        # 1. 优先尝试进度同步，使用户可在未结束访谈期间继续标记后续集数。
         progress_handler = ProgressHandler(self.db, self.plugin_config)
         sync_result = await progress_handler.try_sync(event)
         if sync_result:
             yield event.plain_result(sync_result.message)
-            # 进度同步成功后，尝试发起访谈
+            # 进度同步成功后，尝试发起或扩展访谈
             if sync_result.subject_id and sync_result.episode:
-                question = await self.interview_handler.try_start(
+                start_result = await self.interview_handler.try_start(
                     event,
                     subject_id=sync_result.subject_id,
                     episode=sync_result.episode,
                     subject_name=sync_result.subject_name,
                     subject_name_cn=sync_result.subject_name_cn,
                 )
-                if question:
-                    msg = f'想聊聊这一集吗？\n\n{question}\n\n（随时可以说"不聊了"结束访谈）'
-                    hint = self.interview_handler.get_routing_hint(
-                        exclude=(sync_result.subject_id, sync_result.episode, sync_result.episode)
+                name = sync_result.subject_name_cn or sync_result.subject_name
+                episode_label = self.interview_handler._format_episode_range(
+                    start_result.start_episode, start_result.end_episode
+                )
+                if start_result.status == "started":
+                    msg = f'想聊聊《{name}》{episode_label}吗？\n\n{start_result.question}\n\n（随时可以说"不聊了"结束访谈）'
+                elif start_result.status == "extended_pending":
+                    msg = (
+                        f"已将《{name}》的访谈合并为{episode_label}。\n\n"
+                        f"{start_result.question}\n\n（随时可以说\"不聊了\"结束访谈）"
                     )
+                elif start_result.status == "extended_active":
+                    msg = f"已将《{name}》的活跃访谈扩展为{episode_label}，此前对话已保留。"
+                else:
+                    msg = ""
+                if msg:
+                    hint = self.interview_handler.get_routing_hint(sync_result.subject_id)
                     if hint:
                         msg += "\n" + hint
                     yield event.plain_result(msg)
+            return
+
+        # 2. 再将普通消息路由到活跃访谈。
+        if self.interview_handler.has_active_session():
+            result = await self.interview_handler.handle_message(event)
+            if result:
+                yield event.plain_result(result)
+            return
 
     async def terminate(self):
         # 每步清理独立 try/except：确保一处失败不阻断后续清理，

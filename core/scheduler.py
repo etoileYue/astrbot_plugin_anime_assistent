@@ -114,12 +114,8 @@ class UpdateScheduler:
             for diff in progress_diffs:
                 start_episode = diff["start_episode"]
                 end_episode = diff["end_episode"]
-                if self._interview_handler.has_active_session(
-                    diff["subject_id"], start_episode, end_episode
-                ):
-                    continue
                 try:
-                    question = await self._interview_handler.try_start_auto(
+                    start_result = await self._interview_handler.try_start_auto(
                         umo=umo,
                         subject_id=diff["subject_id"],
                         episode=end_episode,
@@ -127,23 +123,33 @@ class UpdateScheduler:
                         subject_name_cn=diff.get("subject_name_cn", ""),
                         start_episode=start_episode,
                     )
-                    if question:
+                    if start_result.status in {"started", "extended_pending", "extended_active"}:
                         interview_count += 1
                         name = diff.get("subject_name_cn") or diff["subject_name"]
                         episode_label = (
-                            f"第{end_episode}集"
-                            if start_episode == end_episode
-                            else f"第{start_episode}-{end_episode}集"
+                            f"第{start_result.end_episode}集"
+                            if start_result.start_episode == start_result.end_episode
+                            else f"第{start_result.start_episode}-{start_result.end_episode}集"
                         )
-                        msg = (
-                            f"检测到你在 Bangumi 上《{name}》的观看进度已更新"
-                            f"（{episode_label}）。\n\n"
-                            f"{question}\n\n"
-                            f"（随时可以说\"不聊了\"结束访谈）"
-                        )
-                        hint = self._interview_handler.get_routing_hint(
-                            exclude=(diff["subject_id"], start_episode, end_episode)
-                        )
+                        if start_result.status == "started":
+                            msg = (
+                                f"检测到你在 Bangumi 上《{name}》的观看进度已更新"
+                                f"（{episode_label}）。\n\n"
+                                f"{start_result.question}\n\n"
+                                f"（随时可以说\"不聊了\"结束访谈）"
+                            )
+                        elif start_result.status == "extended_pending":
+                            msg = (
+                                f"检测到《{name}》的观看进度继续更新，已将访谈合并为"
+                                f"{episode_label}。\n\n{start_result.question}\n\n"
+                                f"（随时可以说\"不聊了\"结束访谈）"
+                            )
+                        else:
+                            msg = (
+                                f"检测到《{name}》的观看进度继续更新，已将活跃访谈扩展为"
+                                f"{episode_label}，此前对话已保留。"
+                            )
+                        hint = self._interview_handler.get_routing_hint(diff["subject_id"])
                         if hint:
                             msg += "\n" + hint
                         chain = MessageChain().message(msg)

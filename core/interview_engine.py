@@ -45,6 +45,10 @@ class InterviewEngine:
         self.round = 0
         self.max_rounds = config.max_interview_rounds
         self._history: list[tuple[str, str]] = []  # [(question, answer), ...]
+        # 同一轮问答目前会分别写入“待回答问题”和“用户回答”两条记录；保留本
+        # 会话写入过的主键，扩展章节范围时绝不能误改历史访谈。
+        self._interview_ids: list[int] = []
+        self._initial_interview_id: int | None = None
         self._comments_context: str = ""
         self._comments_task: asyncio.Task[str] | None = None
 
@@ -68,13 +72,15 @@ class InterviewEngine:
             self.round = 1
             self._history.append((question, ""))
             # 保存到数据库
-            await self._db.save_interview(
+            interview = await self._db.save_interview(
                 subject_id=self.subject_id,
                 episode=self.episode,
                 episode_start=self.start_episode,
                 question=question,
                 round_num=self.round,
             )
+            self._interview_ids.append(interview.id)
+            self._initial_interview_id = interview.id
             return question
         except Exception as e:
             logger.error(f"生成初始问题失败: {e}")
@@ -96,7 +102,7 @@ class InterviewEngine:
         # 更新当前轮的回答
         if self._history:
             self._history[-1] = (self._history[-1][0], answer)
-        await self._db.save_interview(
+        interview = await self._db.save_interview(
             subject_id=self.subject_id,
             episode=self.episode,
             episode_start=self.start_episode,
@@ -104,6 +110,7 @@ class InterviewEngine:
             answer=answer,
             round_num=self.round,
         )
+        self._interview_ids.append(interview.id)
 
         # 判断是否达到最大轮数
         self.round += 1
@@ -118,18 +125,63 @@ class InterviewEngine:
             follow_up = await self._generate_follow_up(answer, umo)
             self.state = InterviewState.WAITING
             self._history.append((follow_up, ""))
-            await self._db.save_interview(
+            interview = await self._db.save_interview(
                 subject_id=self.subject_id,
                 episode=self.episode,
                 episode_start=self.start_episode,
                 question=follow_up,
                 round_num=self.round,
             )
+            self._interview_ids.append(interview.id)
             return follow_up
         except Exception as e:
             logger.error(f"生成追问失败: {e}")
             self.state = InterviewState.ENDED
             return "聊得很开心！观感记录已保存。"
+
+    @property
+    def has_answers(self) -> bool:
+        """当前访谈是否已有正式回答。"""
+        return any(answer for _, answer in self._history)
+
+    async def extend_to(self, episode: int, umo: str) -> str | None:
+        """将未结束访谈扩展至更高集数；首问未答时返回替换后的首问。"""
+        if episode <= self.episode:
+            return None
+
+        had_answers = self.has_answers
+        self.episode = episode
+        await self._refresh_comments_prefetch()
+        await self._db.update_interview_range(
+            self._interview_ids, self.start_episode, self.episode
+        )
+
+        if had_answers or not self._history:
+            return None
+
+        question = await self._generate_initial_question(umo)
+        self._history[0] = (question, "")
+        if self._initial_interview_id is not None:
+            await self._db.update_interview_question(
+                self._initial_interview_id, question
+            )
+        return question
+
+    async def _refresh_comments_prefetch(self):
+        """丢弃旧范围的评论抓取任务，并为扩展后的范围重新预取。"""
+        task = self._comments_task
+        self._comments_task = None
+        self._comments_context = ""
+        if task is not None and not task.done():
+            task.cancel()
+        if task is not None:
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                logger.warning("取消旧评论预取任务失败", exc_info=True)
+        self._start_comments_prefetch()
 
     def _start_comments_prefetch(self):
         """后台预抓取评论；首问不等待也不使用该结果。"""
@@ -155,6 +207,8 @@ class InterviewEngine:
     async def _fetch_comments_context(self) -> str:
         """按集顺序抓取连续范围的评论，并保留剧集来源。"""
         try:
+            start_episode = self.start_episode
+            end_episode = self.episode
             from ..api.bangumi import BangumiClient
 
             client = BangumiClient(self._config)
@@ -167,9 +221,9 @@ class InterviewEngine:
             episode_map = {
                 ep.ep: ep.id
                 for ep in episodes
-                if self.start_episode <= ep.ep <= self.episode
+                if start_episode <= ep.ep <= end_episode
             }
-            for episode in range(self.start_episode, self.episode + 1):
+            for episode in range(start_episode, end_episode + 1):
                 episode_id = episode_map.get(episode)
                 if episode_id is None:
                     logger.warning("未找到第%s集的 Bangumi 章节 ID", episode)
