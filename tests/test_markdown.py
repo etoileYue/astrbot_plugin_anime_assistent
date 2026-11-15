@@ -1,5 +1,8 @@
 """storage/markdown.py 单元测试。"""
 
+from io import BytesIO
+from zipfile import ZipFile
+
 import pytest
 
 from storage.markdown import MarkdownStorage
@@ -466,6 +469,22 @@ class TestPathMethods:
         resolved = storage._resolve_path("/2026.4/test.md")
         assert resolved == tmp_path / "2026.4" / "test.md"
 
+    def test_resolve_path_rejects_sibling_with_same_prefix(self, tmp_path):
+        storage = _make_storage(tmp_path / "notes")
+        with pytest.raises(ValueError, match="traversal"):
+            storage._resolve_path("../notes-backup/private.md")
+
+    def test_resolve_path_rejects_symlink_to_sibling(self, tmp_path):
+        base = tmp_path / "notes"
+        base.mkdir()
+        sibling = tmp_path / "notes-backup"
+        sibling.mkdir()
+        (sibling / "private.md").write_text("private", encoding="utf-8")
+        (base / "linked").symlink_to(sibling, target_is_directory=True)
+        storage = _make_storage(base)
+        with pytest.raises(ValueError, match="traversal"):
+            storage._resolve_path("linked/private.md")
+
     def test_list_directory_empty(self, tmp_path):
         """空目录返回空列表。"""
         storage = _make_storage(tmp_path)
@@ -621,3 +640,66 @@ class TestPathMethods:
         ok, msg = storage.delete_path("does-not-exist.md")
         assert ok is False
         assert "不存在" in msg
+
+
+class TestNoteExport:
+
+    def test_read_note_bytes_preserves_original(self, tmp_path):
+        content = "\ufeff---\r\nanime: 芙莉莲\r\n---\r\n\r\n# 观感\r\n".encode("utf-8")
+        (tmp_path / "笔记.md").write_bytes(content)
+        storage = _make_storage(tmp_path)
+        assert storage.read_note_bytes("笔记.md") == content
+        assert (tmp_path / "笔记.md").read_bytes() == content
+
+    def test_zip_preserves_paths_bytes_and_ignores_other_files(self, tmp_path):
+        notes = {
+            "根目录.md": b"",
+            "2026.4/芙莉莲.md": "---\r\nanime: 芙莉莲\r\n---\r\n".encode("utf-8"),
+            "2026.1/芙莉莲.md": b"older note\n",
+            '自建目录/嵌套/空 格 & "引号" # + %.md': "正文".encode("utf-8"),
+        }
+        for path, content in notes.items():
+            target = tmp_path / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+        (tmp_path / "image.png").write_bytes(b"image")
+        (tmp_path / "data.txt").write_bytes(b"other")
+        (tmp_path / "空目录").mkdir()
+        storage = _make_storage(tmp_path)
+
+        with ZipFile(BytesIO(storage.export_notes_zip())) as archive:
+            assert set(archive.namelist()) == set(notes)
+            assert {name: archive.read(name) for name in archive.namelist()} == notes
+        for path, content in notes.items():
+            assert (tmp_path / path).read_bytes() == content
+
+    def test_zip_skips_symlinks_and_directory_cycles(self, tmp_path):
+        base = tmp_path / "notes"
+        base.mkdir()
+        sibling = tmp_path / "notes-backup"
+        sibling.mkdir()
+        (base / "real.md").write_bytes(b"note")
+        (sibling / "private.md").write_bytes(b"private")
+        (base / "outside.md").symlink_to(sibling / "private.md")
+        (base / "inside.md").symlink_to(base / "real.md")
+        (base / "broken.md").symlink_to(sibling / "missing.md")
+        (base / "linked-dir").symlink_to(sibling, target_is_directory=True)
+        (base / "loop").symlink_to(base, target_is_directory=True)
+
+        with ZipFile(BytesIO(_make_storage(base).export_notes_zip())) as archive:
+            assert archive.namelist() == ["real.md"]
+            assert archive.read("real.md") == b"note"
+
+    @pytest.mark.parametrize("state", ["missing", "empty", "other_files", "only_symlink"])
+    def test_zip_rejects_empty_note_library(self, tmp_path, state):
+        base = tmp_path / "notes"
+        if state != "missing":
+            base.mkdir()
+        if state == "other_files":
+            (base / "data.txt").write_bytes(b"text")
+        if state == "only_symlink":
+            target = tmp_path / "private.md"
+            target.write_bytes(b"private")
+            (base / "linked.md").symlink_to(target)
+        with pytest.raises(FileNotFoundError):
+            _make_storage(base).export_notes_zip()

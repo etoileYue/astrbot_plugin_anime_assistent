@@ -2,8 +2,10 @@
 
 import logging
 import os
+from io import BytesIO
 from pathlib import Path
 from typing import Optional
+from zipfile import ZIP_DEFLATED, ZipFile
 
 logger = logging.getLogger(__name__)
 
@@ -223,9 +225,46 @@ class MarkdownStorage:
             cleaned = cleaned.lstrip("/")
 
         resolved = (self._base_dir / cleaned).resolve()
-        if not str(resolved).startswith(str(self._base_dir.resolve())):
+        if not resolved.is_relative_to(self._base_dir.resolve()):
             raise ValueError(f"Path traversal denied: {sub_path}")
         return resolved
+
+    def read_note_bytes(self, sub_path: str) -> bytes:
+        """读取已保存的 Markdown 原始字节，供附件下载使用。"""
+        if Path(sub_path).suffix != ".md":
+            raise ValueError("只能导出 .md 笔记")
+        filepath = self._resolve_path(sub_path)
+        if not filepath.is_file():
+            raise FileNotFoundError(sub_path)
+        return filepath.read_bytes()
+
+    def export_notes_zip(self) -> bytes:
+        """打包全部 Markdown 笔记，保留相对路径，跳过符号链接。"""
+        base_dir = self._base_dir.resolve()
+        buffer = BytesIO()
+        count = 0
+
+        def on_walk_error(error: OSError) -> None:
+            raise error
+
+        if not base_dir.exists():
+            raise FileNotFoundError("暂无可导出的笔记")
+
+        with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
+            for directory, dirs, files in os.walk(base_dir, onerror=on_walk_error):
+                parent = Path(directory)
+                dirs[:] = sorted(d for d in dirs if not (parent / d).is_symlink())
+                for name in sorted(files):
+                    filepath = parent / name
+                    if filepath.suffix != ".md" or filepath.is_symlink():
+                        continue
+                    relative_path = filepath.relative_to(base_dir).as_posix()
+                    archive.writestr(relative_path, self.read_note_bytes(relative_path))
+                    count += 1
+
+        if not count:
+            raise FileNotFoundError("暂无可导出的笔记")
+        return buffer.getvalue()
 
     def list_directory(self, sub_path: str = "") -> dict:
         """列出子目录下的文件和文件夹（仅 .md 文件）。

@@ -1,5 +1,6 @@
 """Web 笔记编辑器 — 类 WebViewer 布局 + 可收起侧边栏。"""
 
+import asyncio
 import html as html_mod
 import logging
 from pathlib import Path
@@ -82,11 +83,11 @@ body.sidebar-open .sidebar { transform: translateX(0); }
   letter-spacing: 0.02em;
 }
 .sidebar-tools {
-  padding: 10px 12px; display: flex; gap: 6px; flex-shrink: 0;
+  padding: 10px 12px; display: flex; flex-wrap: wrap; gap: 6px; flex-shrink: 0;
   border-bottom: 1px solid var(--border);
 }
 .sidebar-tools details { position: relative; }
-.sidebar-tools summary {
+.sidebar-tools summary, .sidebar-tools .export-all {
   padding: 5px 12px; font-size: 12px; border: 1px solid var(--border);
   border-radius: 6px; cursor: pointer; background: var(--card);
   color: var(--text); user-select: none; list-style: none;
@@ -94,6 +95,9 @@ body.sidebar-open .sidebar { transform: translateX(0); }
 }
 .sidebar-tools summary::-webkit-details-marker { display: none; }
 .sidebar-tools summary:hover { background: var(--active-bg); border-color: var(--accent-dim); }
+.sidebar-tools .export-all:hover {
+  background: var(--active-bg); border-color: var(--accent-dim); text-decoration: none;
+}
 .tool-form {
   padding: 8px 0; display: flex; flex-direction: column; gap: 6px;
 }
@@ -268,8 +272,9 @@ header h1 span { color: var(--accent); }
 /* editor */
 .editor-toolbar {
   display: flex; justify-content: space-between; align-items: center;
-  margin-bottom: 16px;
+  flex-wrap: wrap; gap: 8px; margin-bottom: 16px;
 }
+.export-hint { font-size: 12px; color: var(--muted); margin-bottom: 10px; }
 .editor-label { font-size: 15px; color: var(--text); font-weight: 600; }
 .editor-textarea {
   width: 100%; min-height: 55vh; padding: 14px;
@@ -348,6 +353,7 @@ PAGE_HTML = """<!DOCTYPE html>
         </div>
       </form>
     </details>
+    <a href="/api/export-all" class="export-all" download>导出全部笔记</a>
   </div>
   <nav class="file-tree">
     {tree}
@@ -542,7 +548,10 @@ def _render_editor(path: str, content: str, flash_html: str) -> str:
         f'{flash_html}'
         f'<div class="editor-toolbar">'
         f'<span class="editor-label">Markdown 原文</span>'
+        f'<a href="/api/export?path={html_mod.escape(quote(path, safe=""))}" '
+        f'class="btn btn-back" download>导出当前笔记</a>'
         f'</div>'
+        f'<p class="export-hint">导出已保存版本，修改后请先保存。</p>'
         f'<form id="editor-form" method="post" action="/api/save">'
         f'<input type="hidden" name="path" value="{encoded_path}">'
         f'<textarea name="content" class="editor-textarea" spellcheck="false" '
@@ -581,6 +590,8 @@ class WebEditor:
 
     def _setup_routes(self):
         self._app.router.add_get("/", self._handle_page)
+        self._app.router.add_get("/api/export", self._handle_export)
+        self._app.router.add_get("/api/export-all", self._handle_export_all)
         self._app.router.add_post("/api/save", self._handle_save)
         self._app.router.add_post("/api/create-file", self._handle_create_file)
         self._app.router.add_post("/api/create-dir", self._handle_create_dir)
@@ -660,6 +671,46 @@ class WebEditor:
             main_content=main_content,
         )
         return web.Response(text=html, content_type="text/html", charset="utf-8")
+
+    async def _handle_export(self, request: web.Request) -> web.Response:
+        path = request.query.get("path", "")
+        if not path:
+            raise web.HTTPBadRequest(text="缺少 path 参数")
+        _validate_path(path)
+        try:
+            content = await asyncio.to_thread(self._storage.read_note_bytes, path)
+        except ValueError:
+            raise web.HTTPBadRequest(text="无效的 Markdown 笔记路径")
+        except FileNotFoundError:
+            raise web.HTTPNotFound(text="笔记文件不存在")
+        except OSError:
+            logger.exception("导出笔记失败")
+            raise web.HTTPInternalServerError(text="导出失败，请稍后重试")
+
+        filename = quote(Path(path).name, safe="")
+        return web.Response(
+            body=content,
+            content_type="text/markdown",
+            charset="utf-8",
+            headers={
+                "Content-Disposition": f"attachment; filename=\"note.md\"; filename*=UTF-8''{filename}",
+            },
+        )
+
+    async def _handle_export_all(self, request: web.Request) -> web.Response:
+        try:
+            content = await asyncio.to_thread(self._storage.export_notes_zip)
+        except FileNotFoundError:
+            raise web.HTTPNotFound(text="暂无可导出的笔记，或笔记已被删除，请刷新后重试")
+        except (OSError, ValueError):
+            logger.exception("导出全部笔记失败")
+            raise web.HTTPInternalServerError(text="导出失败，请稍后重试")
+
+        return web.Response(
+            body=content,
+            content_type="application/zip",
+            headers={"Content-Disposition": 'attachment; filename="bangumibot-notes.zip"'},
+        )
 
     async def _handle_save(self, request: web.Request) -> web.Response:
         data = await request.post()
